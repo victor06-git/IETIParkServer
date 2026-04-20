@@ -1,1 +1,2 @@
 2026-04-20T16:14:30.983Z error: Error al iniciar servidor: One and only one of the "port", "server", or "noServer" options must be specified
+2026-04-20T19:06:35.822Z info: Servidor arrancado en puerto 3000
