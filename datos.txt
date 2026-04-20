@@ -1,0 +1,1 @@
+Server Proxmox: ssh -p 20127 pico2@ieticloudpro.ieti.cat
