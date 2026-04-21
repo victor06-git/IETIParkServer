@@ -82,21 +82,21 @@ async function iniciarServidor() {
                             return;
                         }
 
-                        
                         const moveMsg = { // reenviar el movimiento a todos los demás
                             type: 'MOVE',
                             nickname: nickname || '?',
                             direction: message.direction,
                             timestamp: message.timestamp,
                         };
+
                         broadcast(moveMsg);
                         logger.info(`MOVE de ${nickname}: ${message.direction}`);
                         break;
                     }
 
-                    case 'GET_PLAYERS': {
+                    case 'PLAYER_LIST': {
                         ws.send(JSON.stringify({
-                            type: 'PLAYER_LIST',  // responder al que pida 
+                            type: 'GET_PLAYERS',  // responder al que pida 
                             players: Array.from(players.keys()),
                         }));
                         break;
