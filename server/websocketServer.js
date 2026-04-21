@@ -63,7 +63,7 @@ async function iniciarServidor() {
 
                 switch (message.type) {
 
-                    case 'JOIN': {
+                    case 'JOIN': { // asignacion de gatitos (revisar), lista de catX (hasta el 8)
                         const requested = message.nickname;
                         nickname = uniqueNickname(requested);
                         players.set(nickname, ws);
@@ -72,7 +72,7 @@ async function iniciarServidor() {
                         ws.send(JSON.stringify({ type: 'JOIN_OK', nickname }));
                         logger.info(`Jugador registrado: ${nickname}`);
 
-                        broadcastPlayerList(); // notificar a todos la lista actualizada, revisar que la lista salga sin 
+                        broadcastPlayerList(); // notificar a todos la lista actualizada
                         break;
                     }
 
