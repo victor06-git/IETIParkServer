@@ -48,6 +48,7 @@ async function iniciarServidor() {
             logger.info('Nuevo cliente conectado');
 
             ws.send(JSON.stringify({ type: 'WELCOME', msg: 'Conexión aceptada' }));
+            ws.send(JSON.stringify({ type: 'listPlayersWelcome', msg: broadcastPlayerList()}));
 
             ws.on('message', (data) => {
                 let message;
@@ -71,7 +72,7 @@ async function iniciarServidor() {
                         ws.send(JSON.stringify({ type: 'JOIN_OK', nickname }));
                         logger.info(`Jugador registrado: ${nickname}`);
 
-                        broadcastPlayerList(); // notificar a todos la lista actualizada
+                        broadcastPlayerList(); // notificar a todos la lista actualizada, revisar que la lista salga sin 
                         break;
                     }
 
