@@ -94,9 +94,9 @@ async function iniciarServidor() {
                         break;
                     }
 
-                    case 'PLAYER_LIST': {
+                    case 'GET_PLAYERS' : {
                         ws.send(JSON.stringify({
-                            type: 'GET_PLAYERS',  // responder al que pida 
+                            type: 'PLAYER_LIST',  // responder al que pida 
                             players: Array.from(players.keys()),
                         }));
                         break;
