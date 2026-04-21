@@ -1,7 +1,5 @@
 const WebSocket = require('ws');
-//const { MongoClient } = require('mongodb');
 const winston = require('winston');
-//const crypto = require('crypto');
 require('dotenv').config();
 
 // logger
@@ -17,27 +15,41 @@ const logger = winston.createLogger({
     ],
 });
 
-// config
+// config + var
 const SERVER_PORT = process.env.SERVER_PORT;
+const players = new Map();
+
+function uniqueNickname(nickname) {
+    if (!players.has(nickname)) return nickname;
+    let i = 1;
+    while (players.has(`${nickname}_${i}`)) i++; // evitamos nicknames duplicados laura - laura_1
+    return `${nickname}_${i}`;
+}
+
+function broadcast(data) { // mensaje para todos
+    const json = JSON.stringify(data);
+    for (const ws of players.values()) {
+        if (ws.readyState === WebSocket.OPEN) 
+            ws.send(json);
+    }
+}
+
+function broadcastPlayerList() {
+    broadcast({ type: 'PLAYER_LIST', players: Array.from(players.keys()) }); // envía la lista de jugadores activos a todos
+}
 
 async function iniciarServidor() {
     try {
-        // websocket
         const wss = new WebSocket.Server({ port: SERVER_PORT });
         logger.info(`Servidor arrancado en puerto ${SERVER_PORT}`);
 
         wss.on('connection', (ws) => {
-
+            let nickname = null;
             logger.info('Nuevo cliente conectado');
-            ws.send(JSON.stringify({ msg: 'Conexión aceptada' }));
 
-            const gameId = crypto.randomUUID(); 
-            logger.info(`ID de la partida: ${gameId}`);
+            ws.send(JSON.stringify({ type: 'WELCOME', msg: 'Conexión aceptada' }));
 
-            // mensajes cliente servidor :)
-            ws.on('message', async (data) => {
-
-                // validamos json
+            ws.on('message', (data) => {
                 let message;
                 try {
                     message = JSON.parse(data);
@@ -46,36 +58,68 @@ async function iniciarServidor() {
                     return;
                 }
 
-                logger.info(`Mensaje recibido: ${data}`);
+                logger.info(`Mensaje recibido: ${JSON.stringify(message)}`);
 
-                // verif direcciones
-                const validDirections = ['UP', 'LEFT', 'RIGHT'];
-                if (!validDirections.includes(message.direction)) {
-                    logger.warn('Dirección inválida');
-                    return;
+                switch (message.type) {
+
+                    case 'JOIN': {
+                        const requested = message.nickname;
+                        nickname = uniqueNickname(requested);
+                        players.set(nickname, ws);
+
+                        // confirmar al cliente su nick definitivo
+                        ws.send(JSON.stringify({ type: 'JOIN_OK', nickname }));
+                        logger.info(`Jugador registrado: ${nickname}`);
+
+                        broadcastPlayerList(); // notificar a todos la lista actualizada
+                        break;
+                    }
+
+                    case 'MOVE': {
+                        const validDirections = ['UP', 'LEFT', 'RIGHT'];
+                        if (!validDirections.includes(message.direction)) {
+                            logger.warn(`Dirección inválida: ${message.direction}`);
+                            return;
+                        }
+
+                        
+                        const moveMsg = { // reenviar el movimiento a todos los demás
+                            type: 'MOVE',
+                            nickname: nickname || '?',
+                            direction: message.direction,
+                            timestamp: message.timestamp,
+                        };
+                        broadcast(moveMsg);
+                        logger.info(`MOVE de ${nickname}: ${message.direction}`);
+                        break;
+                    }
+
+                    case 'GET_PLAYERS': {
+                        ws.send(JSON.stringify({
+                            type: 'PLAYER_LIST',  // responder al que pida 
+                            players: Array.from(players.keys()),
+                        }));
+                        break;
+                    }
+
+                    default:
+                        logger.warn(`Tipo desconocido: ${message.type}`);
+                        break;
                 }
-
-                // enviar direcciones
-                const movementJson = {
-                    gameId: gameId,
-                    direction: message.direction,
-                    timestampClient: message.timestamp,
-                    timestampProcessed: Date.now()
-                };
-
-                console.log(JSON.stringify(movementJson));
-
             });
 
-            // cerrar conexión
             ws.on('close', () => {
-                logger.info('Conexión cerrada con cliente');
-
+                if (nickname && players.has(nickname)) {
+                    players.delete(nickname);
+                    logger.info(`Jugador desconectado: ${nickname}`);
+                    broadcastPlayerList();
+                } else {
+                    logger.info('Cliente desconectado (sin JOIN)');
+                }
             });
 
-            // error zzz
             ws.on('error', (err) => {
-                logger.error(`Error en la conexión con cliente: ${err}`);
+                logger.error(`Error en conexión: ${err}`);
             });
         });
 
@@ -85,4 +129,3 @@ async function iniciarServidor() {
 }
 
 iniciarServidor();
-
