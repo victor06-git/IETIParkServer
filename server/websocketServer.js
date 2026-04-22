@@ -4,6 +4,9 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
+// ─── ESPECTADOR ───
+const SPECTATOR_NICKNAME = 'flutter_viewer';
+
 // ─── Logger ───
 const logger = winston.createLogger({
     level: 'debug',
@@ -19,22 +22,22 @@ const logger = winston.createLogger({
 
 // ─── Config ───
 const SERVER_PORT = process.env.SERVER_PORT;
-const TICK_RATE = 60;                   // simulación a 60 Hz
+const TICK_RATE = 60;
 const TICK_MS = 1000 / TICK_RATE;
-const BROADCAST_RATE = 20;              // broadcast a 20 Hz
+const BROADCAST_RATE = 20;
 const BROADCAST_MS = 1000 / BROADCAST_RATE;
 const HEARTBEAT_INTERVAL = 30000;
 
 // ─── Física ───
-const MOVE_SPEED    = 150;   // px/s
-const GRAVITY       = 2088;  // px/s²
-const JUMP_IMPULSE  = 708;   // px/s
-const MAX_FALL      = 840;   // px/s
-const PLAYER_W      = 16;    // hitbox ancho
-const PLAYER_H      = 16;    // hitbox alto
-const FLOOR_EPSILON = 2;     // tolerancia suelo
+const MOVE_SPEED = 150;
+const GRAVITY = 2088;
+const JUMP_IMPULSE = 708;
+const MAX_FALL = 840;
+const PLAYER_W = 16;
+const PLAYER_H = 16;
+const FLOOR_EPSILON = 2;
 
-// ─── Nivel: zonas ───
+// ─── Nivel ───
 let zones = { floors: [], walls: [], doors: [] };
 
 function loadZones() {
@@ -50,16 +53,14 @@ function loadZones() {
 
             if (type === 'floor' || name.includes('floor')) {
                 zones.floors.push(rect);
-            } else if (type === 'mur' || name.includes('mur') || name.includes('wall')) {
+            } else if (type.includes('wall') || name.includes('mur')) {
                 zones.walls.push(rect);
-            } else if (type === 'door' || name.includes('door') || name.includes('puerta')) {
+            } else if (type.includes('door')) {
                 zones.doors.push({ ...rect, open: false });
             }
         }
-        logger.info(`Zonas cargadas: ${zones.floors.length} floors, ${zones.walls.length} walls, ${zones.doors.length} doors`);
     } catch (err) {
         logger.error(`Error cargando zonas: ${err.message}`);
-        // Fallback mínimo
         zones.floors = [{ x: 350, y: 398, w: 1000, h: 20 }];
         zones.walls = [
             { x: 310, y: 0, w: 50, h: 410 },
@@ -69,21 +70,21 @@ function loadZones() {
 }
 
 // ─── Jugadores ───
-const players = new Map(); // nickname → PlayerState
+const players = new Map();
 
 class PlayerState {
-    constructor(ws, cat, spawnX, spawnY) {
+    constructor(ws, cat, x, y) {
         this.ws = ws;
         this.cat = cat;
-        this.x = spawnX;
-        this.y = spawnY;
+        this.x = x;
+        this.y = y;
         this.vx = 0;
         this.vy = 0;
         this.onGround = false;
         this.dir = 'RIGHT';
         this.anim = 'idle';
         this.frame = 0;
-        this.inputDir = 'IDLE';   // último input recibido
+        this.inputDir = 'IDLE';
         this.wantJump = false;
     }
 }
@@ -91,66 +92,33 @@ class PlayerState {
 const SPAWN_X = 514;
 const SPAWN_Y = 395;
 
-// ─── Colisiones ───
+// ─── Utils colisión ───
 function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
     return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
 function playerRect(p) {
-    return { x: p.x - PLAYER_W * 0.5, y: p.y - PLAYER_H * 0.5, w: PLAYER_W, h: PLAYER_H };
-}
-
-function isOnFloor(p) {
-    const pr = playerRect(p);
-    const bottom = pr.y + pr.h;
-    for (const f of zones.floors) {
-        const hOverlap = pr.x + pr.w > f.x && pr.x < f.x + f.w;
-        if (hOverlap && Math.abs(bottom - f.y) <= FLOOR_EPSILON) return true;
-    }
-    return false;
+    return { x: p.x - PLAYER_W / 2, y: p.y - PLAYER_H / 2, w: PLAYER_W, h: PLAYER_H };
 }
 
 function collidesWall(px, py) {
-    const pr = { x: px - PLAYER_W * 0.5, y: py - PLAYER_H * 0.5, w: PLAYER_W, h: PLAYER_H };
+    const pr = { x: px - PLAYER_W / 2, y: py - PLAYER_H / 2, w: PLAYER_W, h: PLAYER_H };
+
     for (const w of zones.walls) {
         if (rectsOverlap(pr.x, pr.y, pr.w, pr.h, w.x, w.y, w.w, w.h)) return true;
     }
-    // Puertas cerradas actúan como paredes
+
     for (const d of zones.doors) {
         if (!d.open && rectsOverlap(pr.x, pr.y, pr.w, pr.h, d.x, d.y, d.w, d.h)) return true;
     }
-    return false;
-}
 
-function collidesOtherPlayer(nickname, px, py) {
-    const pr = { x: px - PLAYER_W * 0.5, y: py - PLAYER_H * 0.5, w: PLAYER_W, h: PLAYER_H };
-    for (const [nick, other] of players) {
-        if (nick === nickname) continue;
-        const or = playerRect(other);
-        if (rectsOverlap(pr.x, pr.y, pr.w, pr.h, or.x, or.y, or.w, or.h)) return true;
-    }
-    return false;
-}
-
-function resolveFloorCollision(p) {
-    const pr = playerRect(p);
-    const bottom = pr.y + pr.h;
-    for (const f of zones.floors) {
-        const hOverlap = pr.x + pr.w > f.x && pr.x < f.x + f.w;
-        if (hOverlap && bottom > f.y && bottom < f.y + f.h + FLOOR_EPSILON) {
-            p.y = f.y - PLAYER_H * 0.5;
-            p.vy = 0;
-            p.onGround = true;
-            return true;
-        }
-    }
     return false;
 }
 
 // ─── Simulación ───
 function simulate(dt) {
     for (const [nickname, p] of players) {
-        // Input → velocidad horizontal
+
         if (p.inputDir === 'LEFT') {
             p.vx = -MOVE_SPEED;
             p.dir = 'LEFT';
@@ -161,49 +129,32 @@ function simulate(dt) {
             p.vx = 0;
         }
 
-        // Salto
         if (p.wantJump && p.onGround) {
             p.vy = -JUMP_IMPULSE;
             p.onGround = false;
             p.wantJump = false;
         }
 
-        // Gravedad
         if (!p.onGround) {
             p.vy += GRAVITY * dt;
             if (p.vy > MAX_FALL) p.vy = MAX_FALL;
         }
 
-        // Movimiento horizontal con colisiones
         const nextX = p.x + p.vx * dt;
-        if (!collidesWall(nextX, p.y) && !collidesOtherPlayer(nickname, nextX, p.y)) {
-            p.x = nextX;
-        } else {
-            p.vx = 0;
-        }
+        if (!collidesWall(nextX, p.y)) p.x = nextX;
 
-        // Movimiento vertical con colisiones
         const nextY = p.y + p.vy * dt;
-        if (!collidesWall(p.x, nextY) && !collidesOtherPlayer(nickname, p.x, nextY)) {
-            p.y = nextY;
-            p.onGround = false;
+        if (!collidesWall(p.x, nextY)) p.y = nextY;
+
+        if (p.y >= SPAWN_Y) {
+            p.y = SPAWN_Y;
+            p.vy = 0;
+            p.onGround = true;
         }
 
-        // Resolver suelo
-        resolveFloorCollision(p);
-        if (!p.onGround) {
-            p.onGround = isOnFloor(p);
-            if (p.onGround) p.vy = 0;
-        }
-
-        // Animación server-side
-        if (!p.onGround) {
-            p.anim = 'jump';
-        } else if (Math.abs(p.vx) > 1) {
-            p.anim = 'run';
-        } else {
-            p.anim = 'idle';
-        }
+        if (!p.onGround) p.anim = 'jump';
+        else if (Math.abs(p.vx) > 1) p.anim = 'run';
+        else p.anim = 'idle';
     }
 }
 
@@ -222,15 +173,20 @@ function broadcast(data) {
     }
 }
 
+
 function broadcastPlayerList() {
-    const playerList = Array.from(players.entries()).map(([nick, p]) => ({
-        nickname: nick, cat: p.cat
-    }));
-    broadcast({ type: 'PLAYER_LIST', players: playerList });
+    const list = Array.from(players.entries())
+        .filter(([nick]) => nick !== SPECTATOR_NICKNAME)
+        .map(([nick, p]) => ({ nickname: nick, cat: p.cat }));
+
+    broadcast({ type: 'PLAYER_LIST', players: list });
 }
 
 function broadcastState() {
     for (const [nickname, p] of players) {
+
+        if (nickname === SPECTATOR_NICKNAME) continue;
+
         broadcast({
             type: 'MOVE',
             nickname,
@@ -244,199 +200,77 @@ function broadcastState() {
     }
 }
 
-function broadcastDoorState() {
-    broadcast({
-        type: 'DOOR_STATE',
-        doors: zones.doors.map((d, i) => ({ index: i, x: d.x, y: d.y, w: d.w, h: d.h, open: d.open }))
-    });
-}
-
-// ─── Server principal ───
+// ─── Server ───
 async function iniciarServidor() {
     loadZones();
 
-    try {
-        const wss = new WebSocket.Server({ port: SERVER_PORT });
-        logger.info(`Servidor arrancado en puerto ${SERVER_PORT}`);
+    const wss = new WebSocket.Server({ port: SERVER_PORT });
 
-        // Game loop: simulación a TICK_RATE Hz
-        setInterval(() => {
-            simulate(1 / TICK_RATE);
-        }, TICK_MS);
+    setInterval(() => simulate(1 / TICK_RATE), TICK_MS);
+    setInterval(() => broadcastState(), BROADCAST_MS);
 
-        // Broadcast de estado a BROADCAST_RATE Hz
-        setInterval(() => {
-            if (players.size > 0) broadcastState();
-        }, BROADCAST_MS);
+    wss.on('connection', (ws) => {
 
-        // Heartbeat
-        const heartbeat = setInterval(() => {
-            wss.clients.forEach((ws) => {
-                if (ws.isAlive === false) {
-                    for (const [nick, data] of players.entries()) {
-                        if (data.ws === ws) {
-                            players.delete(nick);
-                            logger.info(`Jugador eliminado por timeout: ${nick}`);
-                        }
+        let nickname = null;
+
+        ws.on('message', (data) => {
+            const msg = JSON.parse(data);
+
+            switch (msg.type) {
+
+                case 'JOIN': {
+
+                    const requested = msg.nickname;
+
+                    // 🔴 ESPECTADOR
+                    if (requested === SPECTATOR_NICKNAME) {
+                        nickname = requested;
+                        ws.send(JSON.stringify({ type: 'JOIN_OK', nickname }));
+                        logger.info('Viewer conectado');
+                        return;
                     }
+
+                    nickname = uniqueNickname(requested);
+
+                    players.set(nickname, new PlayerState(ws, msg.cat, SPAWN_X, SPAWN_Y));
+
+                    ws.send(JSON.stringify({ type: 'JOIN_OK', nickname }));
+
                     broadcastPlayerList();
-                    return ws.terminate();
+                    break;
                 }
-                ws.isAlive = false;
-                ws.ping();
-            });
-        }, HEARTBEAT_INTERVAL);
 
-        wss.on('close', () => clearInterval(heartbeat));
+                case 'MOVE': {
+                    const p = players.get(nickname);
+                    if (!p) return;
 
-        wss.on('connection', (ws) => {
-            let nickname = null;
-            ws.isAlive = true;
-            ws.on('pong', () => { ws.isAlive = true; });
+                    p.inputDir = msg.dir || 'IDLE';
 
-            logger.info('Nuevo cliente conectado');
-            ws.send(JSON.stringify({ type: 'WELCOME', msg: 'Conexión aceptada' }));
+                    if (msg.jump) p.wantJump = true;
 
-            // Enviar lista actual
-            const playerList = Array.from(players.entries()).map(([nick, p]) => ({
-                nickname: nick, cat: p.cat
-            }));
-            ws.send(JSON.stringify({ type: 'PLAYER_LIST', players: playerList }));
+                    if (msg.frame !== undefined) p.frame = msg.frame;
+                    break;
+                }
 
-            // Enviar estado de puertas
-            if (zones.doors.length > 0) {
-                ws.send(JSON.stringify({
-                    type: 'DOOR_STATE',
-                    doors: zones.doors.map((d, i) => ({ index: i, x: d.x, y: d.y, w: d.w, h: d.h, open: d.open }))
-                }));
+                case 'LEAVE': {
+                    if (players.has(nickname)) {
+                        players.delete(nickname);
+                        broadcastPlayerList();
+                    }
+                    break;
+                }
             }
-
-            ws.on('message', (data) => {
-                let message;
-                try {
-                    message = JSON.parse(data);
-                } catch (err) {
-                    logger.error('JSON inválido');
-                    return;
-                }
-
-                switch (message.type) {
-                    case 'JOIN': {
-                        const requested = message.nickname;
-                        const cat = message.cat || null;
-                        nickname = uniqueNickname(requested);
-
-                        players.set(nickname, new PlayerState(ws, cat, SPAWN_X, SPAWN_Y));
-
-                        ws.send(JSON.stringify({ type: 'JOIN_OK', nickname, cat }));
-                        logger.info(`Jugador registrado: ${nickname} (cat: ${cat})`);
-                        broadcastPlayerList();
-                        break;
-                    }
-
-                    case 'MOVE': {
-                        // El cliente envía intención, no posición
-                        const p = players.get(nickname);
-                        if (!p) return;
-
-                        const dir = message.dir || 'IDLE';
-                        p.inputDir = dir;
-
-                        if (dir === 'UP' || message.jump) {
-                            p.wantJump = true;
-                        }
-
-                        // Aceptar frame del cliente para sincronizar animación
-                        if (message.frame !== undefined) p.frame = message.frame;
-                        break;
-                    }
-
-                    case 'GET_PLAYERS': {
-                        const list = Array.from(players.entries()).map(([nick, p]) => ({
-                            nickname: nick, cat: p.cat
-                        }));
-                        ws.send(JSON.stringify({ type: 'PLAYER_LIST', players: list }));
-                        break;
-                    }
-
-                    case 'OPEN_DOOR': {
-                        const doorIndex = message.doorIndex;
-                        if (doorIndex >= 0 && doorIndex < zones.doors.length) {
-                            zones.doors[doorIndex].open = true;
-                            logger.info(`Puerta ${doorIndex} abierta`);
-                            broadcastDoorState();
-                        }
-                        break;
-                    }
-
-                    case 'CLOSE_DOOR': {
-                        const doorIndex = message.doorIndex;
-                        if (doorIndex >= 0 && doorIndex < zones.doors.length) {
-                            zones.doors[doorIndex].open = false;
-                            logger.info(`Puerta ${doorIndex} cerrada`);
-                            broadcastDoorState();
-                        }
-                        break;
-                    }
-
-                    case 'LEAVE': {
-                        if (nickname && players.has(nickname)) {
-                            players.delete(nickname);
-                            logger.info(`Jugador salió: ${nickname}`);
-                            broadcastPlayerList();
-                            nickname = null;
-                        }
-                        break;
-                    }
-
-                    case 'RESET_PLAYERS': {
-                        players.clear();
-                        logger.info('Lista de jugadores reseteada');
-                        broadcastPlayerList();
-                        break;
-                    }
-
-                    case 'GET_STATE': {
-                        const fullState = Array.from(players.entries()).map(([nick, p]) => ({
-                            nickname: nick,
-                            cat: p.cat,
-                            x: Math.round(p.x),
-                            y: Math.round(p.y),
-                            anim: p.anim,
-                            frame: p.frame,
-                            dir: p.dir
-                        }));
-                        ws.send(JSON.stringify({ 
-                            type: 'FULL_STATE', 
-                            players: fullState 
-                        }));
-                        break;
-                    } 
-
-                    default:
-                        logger.warn(`Tipo desconocido: ${message.type}`);
-                        break;
-                }
-            });
-
-            ws.on('close', () => {
-                if (nickname && players.has(nickname)) {
-                    players.delete(nickname);
-                    logger.info(`Jugador desconectado: ${nickname}`);
-                    broadcastPlayerList();
-                } else {
-                    logger.info('Cliente desconectado (sin JOIN)');
-                }
-            });
-
-            ws.on('error', (err) => {
-                logger.error(`Error en conexión: ${err}`);
-            });
         });
 
-    } catch (err) {
-        logger.error(`Error al iniciar servidor: ${err.message}`);
-    }
+        ws.on('close', () => {
+            if (players.has(nickname)) {
+                players.delete(nickname);
+                broadcastPlayerList();
+            }
+        });
+    });
+
+    logger.info(`Servidor en puerto ${SERVER_PORT}`);
 }
 
 iniciarServidor();
