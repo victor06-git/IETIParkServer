@@ -2,7 +2,7 @@ const WebSocket = require('ws');
 const winston = require('winston');
 require('dotenv').config();
 
-// logger
+// ─── Logger ───
 const logger = winston.createLogger({
     level: 'debug',
     format: winston.format.combine(
@@ -15,10 +15,11 @@ const logger = winston.createLogger({
     ],
 });
 
-// config + var
+// ─── Config ───
 const SERVER_PORT = process.env.SERVER_PORT;
-const players = new Map(); // nickname → { ws, cat, x, y, anim, frame, dir }
+const players = new Map(); // nickname → ws
 
+// ─── Utils ───
 function uniqueNickname(nickname) {
     if (!players.has(nickname)) return nickname;
     let i = 1;
@@ -28,33 +29,32 @@ function uniqueNickname(nickname) {
 
 function broadcast(data) {
     const json = JSON.stringify(data);
-    for (const data of players.values()) {
-        if (data.ws.readyState === WebSocket.OPEN)
-            data.ws.send(json);
+    for (const ws of players.values()) {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(json);
+        }
     }
 }
 
 function broadcastPlayerList() {
-    const playerList = Array.from(players.entries()).map(([nick, data]) => ({
-        nickname: nick,
-        cat: data.cat
-    }));
+    const playerList = Array.from(players.keys()); // SOLO strings
     broadcast({ type: 'PLAYER_LIST', players: playerList });
 }
 
-const HEARTBEAT_INTERVAL = 30000; // 30 segundos
+// ─── Heartbeat ───
+const HEARTBEAT_INTERVAL = 30000;
 
+// ─── Server ───
 async function iniciarServidor() {
     try {
         const wss = new WebSocket.Server({ port: SERVER_PORT });
         logger.info(`Servidor arrancado en puerto ${SERVER_PORT}`);
 
-        // Heartbeat para detectar conexiones muertas
         const interval = setInterval(() => {
             wss.clients.forEach((ws) => {
                 if (ws.isAlive === false) {
-                    for (const [nick, data] of players.entries()) {
-                        if (data.ws === ws) {
+                    for (const [nick, client] of players.entries()) {
+                        if (client === ws) {
                             players.delete(nick);
                             logger.info(`Jugador eliminado por timeout: ${nick}`);
                         }
@@ -71,20 +71,20 @@ async function iniciarServidor() {
 
         wss.on('connection', (ws) => {
             let nickname = null;
-            logger.info('Nuevo cliente conectado');
-
-            // Heartbeat: marcar como vivo al conectar
             ws.isAlive = true;
+
             ws.on('pong', () => { ws.isAlive = true; });
 
+            logger.info('Nuevo cliente conectado');
+
+            // Bienvenida
             ws.send(JSON.stringify({ type: 'WELCOME', msg: 'Conexión aceptada' }));
 
-            // Enviar lista actual de jugadores al nuevo cliente
-            const playerList = Array.from(players.entries()).map(([nick, data]) => ({
-                nickname: nick,
-                cat: data.cat
+            // Lista actual
+            ws.send(JSON.stringify({
+                type: 'PLAYER_LIST',
+                players: Array.from(players.keys())
             }));
-            ws.send(JSON.stringify({ type: 'PLAYER_LIST', players: playerList }));
 
             ws.on('message', (data) => {
                 let message;
@@ -101,57 +101,39 @@ async function iniciarServidor() {
 
                     case 'JOIN': {
                         const requested = message.nickname;
-                        const cat = message.cat || null;
                         nickname = uniqueNickname(requested);
 
-                        players.set(nickname, {
-                            ws,
-                            cat,
-                            x: 0, y: 0, anim: '', frame: 0, dir: 'RIGHT'
-                        });
+                        players.set(nickname, ws);
 
-                        const savedData = players.get(nickname);
-                        ws.send(JSON.stringify({ type: 'JOIN_OK', nickname, cat: savedData.cat }));
-                        logger.info(`Jugador registrado: ${nickname} con gato: ${cat}`);
+                        ws.send(JSON.stringify({
+                            type: 'JOIN_OK',
+                            nickname
+                        }));
 
+                        logger.info(`Jugador registrado: ${nickname}`);
                         broadcastPlayerList();
                         break;
                     }
 
                     case 'MOVE': {
-                        const playerData = players.get(nickname);
-                        if (!playerData) return;
+                        if (!nickname) return;
 
-                        playerData.x     = message.x     ?? playerData.x;
-                        playerData.y     = message.y     ?? playerData.y;
-                        playerData.anim  = message.anim  ?? playerData.anim;
-                        playerData.frame = message.frame ?? playerData.frame;
-                        playerData.dir   = message.dir   ?? playerData.dir;
+                        const direction = message.direction || "?";
 
-                        const moveMsg = {
-                            type:     'MOVE',
+                        broadcast({
+                            type: 'MOVE',
                             nickname: nickname,
-                            cat:      playerData.cat,
-                            x:        playerData.x,
-                            y:        playerData.y,
-                            anim:     playerData.anim,
-                            frame:    playerData.frame,
-                            dir:      playerData.dir,
-                        };
+                            direction: direction
+                        });
 
-                        broadcast(moveMsg);
-                        logger.info(`MOVE de ${nickname}: dir=${playerData.dir} x=${playerData.x} y=${playerData.y}`);
+                        logger.info(`MOVE de ${nickname}: ${direction}`);
                         break;
                     }
 
                     case 'GET_PLAYERS': {
-                        const playerList = Array.from(players.entries()).map(([nick, data]) => ({
-                            nickname: nick,
-                            cat: data.cat
-                        }));
                         ws.send(JSON.stringify({
                             type: 'PLAYER_LIST',
-                            players: playerList
+                            players: Array.from(players.keys())
                         }));
                         break;
                     }
@@ -159,7 +141,7 @@ async function iniciarServidor() {
                     case 'LEAVE': {
                         if (nickname && players.has(nickname)) {
                             players.delete(nickname);
-                            logger.info(`Jugador salió voluntariamente: ${nickname}`);
+                            logger.info(`Jugador salió: ${nickname}`);
                             broadcastPlayerList();
                             nickname = null;
                         }
