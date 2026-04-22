@@ -88,8 +88,8 @@ class PlayerState {
     }
 }
 
-const SPAWN_X = 514;
-const SPAWN_Y = 395;
+const SPAWN_X = 160;
+const SPAWN_Y = 170;
 
 // ─── Colisiones ───
 function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
