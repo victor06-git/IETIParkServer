@@ -29,7 +29,7 @@ function uniqueNickname(nickname) {
 
 function broadcast(data) {
     const json = JSON.stringify(data);
-    for (const ws of players.values()) {
+    for (const { ws } of players.values()) {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(json);
         }
@@ -37,7 +37,10 @@ function broadcast(data) {
 }
 
 function broadcastPlayerList() {
-    const playerList = Array.from(players.keys()); // SOLO strings
+    const playerList = Array.from(players.entries()).map(([nickname, data]) => ({
+        nickname,
+        cat: data.cat || ''
+    }));
     broadcast({ type: 'PLAYER_LIST', players: playerList });
 }
 
@@ -53,8 +56,8 @@ async function iniciarServidor() {
         const interval = setInterval(() => {
             wss.clients.forEach((ws) => {
                 if (ws.isAlive === false) {
-                    for (const [nick, client] of players.entries()) {
-                        if (client === ws) {
+                    for (const [nick, data] of players.entries()) {
+                        if (data.ws === ws) {
                             players.delete(nick);
                             logger.info(`Jugador eliminado por timeout: ${nick}`);
                         }
@@ -83,7 +86,10 @@ async function iniciarServidor() {
             // Lista actual
             ws.send(JSON.stringify({
                 type: 'PLAYER_LIST',
-                players: Array.from(players.keys())
+                players: Array.from(players.entries()).map(([nickname, data]) => ({
+                    nickname,
+                    cat: data.cat || ''
+                }))
             }));
 
             ws.on('message', (data) => {
@@ -103,7 +109,7 @@ async function iniciarServidor() {
                         const requested = message.nickname;
                         nickname = uniqueNickname(requested);
 
-                        players.set(nickname, ws);
+                        players.set(nickname, { ws, x: -1, y: -1, cat: message.cat || '' });
 
                         ws.send(JSON.stringify({
                             type: 'JOIN_OK',
@@ -118,22 +124,39 @@ async function iniciarServidor() {
                     case 'MOVE': {
                         if (!nickname) return;
 
-                        const direction = message.direction || "?";
+                        const playerData = players.get(nickname);
+                        if (!playerData) return;
+
+                        const dir   = message.dir   || 'IDLE';
+                        const x     = typeof message.x === 'number' ? message.x : playerData.x;
+                        const y     = typeof message.y === 'number' ? message.y : playerData.y;
+                        const anim  = message.anim  || '';
+                        const frame = message.frame || 0;
+
+                        playerData.x = x;
+                        playerData.y = y;
 
                         broadcast({
                             type: 'MOVE',
-                            nickname: nickname,
-                            direction: direction
+                            nickname,
+                            dir,
+                            x,
+                            y,
+                            anim,
+                            frame
                         });
 
-                        logger.info(`MOVE de ${nickname}: ${direction}`);
+                        logger.info(`MOVE de ${nickname}: dir=${dir} x=${x} y=${y}`);
                         break;
                     }
 
                     case 'GET_PLAYERS': {
                         ws.send(JSON.stringify({
                             type: 'PLAYER_LIST',
-                            players: Array.from(players.keys())
+                            players: Array.from(players.entries()).map(([nickname, data]) => ({
+                                nickname,
+                                cat: data.cat || ''
+                            }))
                         }));
                         break;
                     }
