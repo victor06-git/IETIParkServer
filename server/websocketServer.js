@@ -396,6 +396,23 @@ async function iniciarServidor() {
                         break;
                     }
 
+                    case 'GET_STATE': {
+                        const fullState = Array.from(players.entries()).map(([nick, p]) => ({
+                            nickname: nick,
+                            cat: p.cat,
+                            x: Math.round(p.x),
+                            y: Math.round(p.y),
+                            anim: p.anim,
+                            frame: p.frame,
+                            dir: p.dir
+                        }));
+                        ws.send(JSON.stringify({ 
+                            type: 'FULL_STATE', 
+                            players: fullState 
+                        }));
+                        break;
+                    } 
+
                     default:
                         logger.warn(`Tipo desconocido: ${message.type}`);
                         break;
