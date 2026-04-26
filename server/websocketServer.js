@@ -19,7 +19,7 @@ const HEARTBEAT_INTERVAL = 30000;
 
 const WORLD = { width: 320, height: 180, floorY: 164 };
 const CAT = { width: 16, height: 16, speed: 90, gravity: 900, jump: 310, maxFall: 520 };
-const POTION = { x: 157, y: 160, width: 24, height: 24, taken: false };
+const POTION = { x: 157, y: 160, width: 24, height: 24, taken: false, carrierId: null };
 const DOOR = { x: 262, y: 153, width: 48, height: 80, open: false }; // arbol/puerta
 const SPAWNS = [
   { x: 29, y: 148 }, { x: 47, y: 148 }, { x: 65, y: 148 }, { x: 83, y: 148 },
@@ -78,6 +78,7 @@ function publicPlayers() {
     anim: p.anim,
     facingRight: p.facingRight,
     grounded: p.grounded,
+    hasPotion: POTION.carrierId === p.id,
     viewer: false
   }));
 }
@@ -85,6 +86,7 @@ function publicPlayers() {
 function publicWorld() {
   return {
     potionTaken: POTION.taken,
+    potionCarrierId: POTION.carrierId || '',
     doorOpen: DOOR.open,
     potionX: POTION.x,
     potionY: POTION.y,
@@ -157,9 +159,12 @@ function simulatePlayer(p) {
 
   const r = playerRect(p);
   if (!POTION.taken && rectsOverlap(r, POTION)) {
+    // La poción/llave queda asignada a un portador.
+    // No desaparece: el cliente la dibuja encima de este jugador.
     POTION.taken = true;
-    DOOR.open = true; // la pocion abre/elimina el arbol-puerta
-    logger.info(`${p.nickname} ha recogido la pocion. Puerta/arbol abierto.`);
+    POTION.carrierId = p.id;
+    DOOR.open = true; // Se puede cruzar, pero el árbol se sigue dibujando.
+    logger.info(`${p.nickname} ha recogido la pocion.`);
   }
 
   p.x = clamp(p.x, CAT.width * 0.5, WORLD.width - CAT.width * 0.5);
@@ -170,6 +175,7 @@ function simulatePlayer(p) {
 function resetWorldIfEmpty() {
   if (players.size === 0) {
     POTION.taken = false;
+    POTION.carrierId = null;
     DOOR.open = false;
   }
 }
@@ -256,7 +262,7 @@ function handleMessage(ws, raw) {
       removeClient(ws, 'leave');
       break;
     case 'RESET_PLAYERS':
-      players.clear(); POTION.taken = false; DOOR.open = false; broadcastPlayerList();
+      players.clear(); POTION.taken = false; POTION.carrierId = null; DOOR.open = false; broadcastPlayerList();
       break;
     default:
       send(ws, { type: 'ERROR', msg: `Tipo desconocido: ${msg.type}` });
@@ -268,6 +274,11 @@ function removeClient(ws, reason) {
   if (client && client.id && players.has(client.id)) {
     const nick = players.get(client.id).nickname;
     players.delete(client.id);
+    if (POTION.carrierId === client.id) {
+      POTION.taken = false;
+      POTION.carrierId = null;
+      DOOR.open = false;
+    }
     logger.info(`Jugador desconectado (${reason}): ${nick}`);
     resetWorldIfEmpty();
     broadcastPlayerList();
