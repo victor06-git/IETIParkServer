@@ -17,6 +17,7 @@ const log = winston.createLogger({
 
 const PORT = Number(process.env.SERVER_PORT);
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017';
+const HTTP_PORT = process.env.HTTP_PORT;
 const DB_NAME = 'ietipark2';
 const MAX_PLAYERS = 8;
 const FPS = 30;
