@@ -17,8 +17,7 @@ const log = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
-const WS_PORT = Number(process.env.SERVER_PORT || 3000);
-const HTTP_PORT = Number(process.env.HTTP_PORT || 3005);
+const PORT = Number(process.env.SERVER_PORT || 3000);
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017';
 const SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
 const PING_EACH_MS = 30000;
@@ -138,9 +137,9 @@ function handleMessage(ws, raw, room) {
   send(ws, { type: 'ERROR', msg: `Tipo desconocido: ${msg.type}` });
 }
 
-function startWebSocketServer(room) {
-  const wss = new WebSocket.Server({ port: WS_PORT });
-  log.info(`Servidor WebSocket escuchando en ${WS_PORT}`);
+function startWebSocketServer(httpServer, room) {
+  const wss = new WebSocket.Server({ server: httpServer });
+  log.info(`Servidor WebSocket adjunto al servidor HTTP`);
 
   setInterval(() => {
     room.tick();
@@ -174,7 +173,6 @@ function startWebSocketServer(room) {
 }
 
 
-// -- endpointttt
 function startHttpServer() {
   const app = express();
 
@@ -207,20 +205,22 @@ function startHttpServer() {
 
   app.use(express.static(path.join(__dirname, '..', 'web')));
 
-  const httpServer = app.listen(HTTP_PORT, () => {
-    log.info(`Servidor HTTP escuchando en http://localhost:${HTTP_PORT}`);
-    log.info(`Web con QR: http://localhost:${HTTP_PORT}/web`);
-    log.info(`APK: http://localhost:${HTTP_PORT}/apk`);
+  const httpServer = app.listen(PORT, () => {
+    log.info(`Servidor escuchando en http://localhost:${PORT}`);
+    log.info(`Web con QR: http://localhost:${PORT}/web`);
+    log.info(`APK: http://localhost:${PORT}/apk`);
   });
 
   httpServer.on('error', err => {
     if (err.code === 'EADDRINUSE') {
-      log.error(`El puerto HTTP ${HTTP_PORT} ya está en uso. Cierra el proceso anterior o cambia HTTP_PORT en .env.`);
+      log.error(`El puerto ${PORT} ya está en uso.`);
     } else {
       log.error(`Error HTTP: ${err.message}`);
     }
     process.exit(1);
   });
+
+  return httpServer;
 }
 
 async function main() {
@@ -237,8 +237,8 @@ async function main() {
     }
   });
 
-  startWebSocketServer(room);
-  startHttpServer();
+  const httpServer = startHttpServer();
+  startWebSocketServer(httpServer, room);
 }
 
 main().catch(err => {
