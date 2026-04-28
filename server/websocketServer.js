@@ -19,8 +19,8 @@ const PING_EACH_MS = 30000;
 
 const map = { width: 320, height: 180, floorY: 164 };
 const cat = { w: 16, h: 16, speed: 90, gravity: 900, jump: 310, maxFall: 520 };
-const potion = { x: 157, y: 145, w: 18, h: 18, taken: false, carrierId: null };
-const tree = { x: 262, y: 153, w: 48, h: 80, open: false };
+const potion = { x: 181, y: 118, w: 45, h: 45, taken: false, carrierId: null, consumed: false };
+const tree = { x: 241, y: 90, w: 90, h: 90, open: false, openedAt: 0 };
 
 const spawns = [
   { x: 29, y: 148 }, { x: 47, y: 148 }, { x: 65, y: 148 }, { x: 83, y: 148 },
@@ -72,6 +72,25 @@ function catRect(p, x = p.x, y = p.y) {
   return { x: x - cat.w * 0.5, y: y - cat.h, w: cat.w, h: cat.h };
 }
 
+
+function potionRect() {
+  return {
+    x: potion.x - potion.w * 0.5,
+    y: potion.y - potion.h * 0.5,
+    w: potion.w,
+    h: potion.h
+  };
+}
+
+function openTreeWithPotion(player) {
+  potion.taken = true;
+  potion.consumed = true;
+  potion.carrierId = null;
+  tree.open = true;
+  tree.openedAt = Date.now();
+  log.info(`${player.nickname} cura el arbol con la pocion`);
+}
+
 function send(ws, msg) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
@@ -103,10 +122,12 @@ function playersForClient() {
 function worldForClient() {
   return {
     potionTaken: potion.taken,
+    potionConsumed: potion.consumed,
     potionCarrierId: potion.carrierId || '',
     potionX: potion.x,
     potionY: potion.y,
     doorOpen: tree.open,
+    treeOpening: tree.open && Date.now() - tree.openedAt < 1100,
     doorX: tree.x,
     doorY: tree.y,
     doorWidth: tree.w,
@@ -122,9 +143,20 @@ function sendState() {
   broadcast({ type: 'STATE', players: playersForClient(), world: worldForClient() });
 }
 
-function wallBlocks(rect) {
+function wallBlocks(rect, player) {
   if (rect.x < 0 || rect.x + rect.w > map.width) return true;
-  return rectsTouch(rect, tree);
+  if (tree.open) return false;
+
+  // El árbol bloquea a todos, excepto al jugador que lleva la poción.
+  // Cuando ese jugador lo toca, cura el árbol y se abre el paso.
+  if (rectsTouch(rect, tree)) {
+    if (player && potion.carrierId === player.id && !potion.consumed) {
+      openTreeWithPotion(player);
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 function touchesOther(player, x, y) {
@@ -137,7 +169,7 @@ function touchesOther(player, x, y) {
 
 function canMoveTo(player, x, y) {
   const r = catRect(player, x, y);
-  return !wallBlocks(r) && !touchesOther(player, x, y);
+  return !wallBlocks(r, player) && !touchesOther(player, x, y);
 }
 
 function isStandingOnSomething(player) {
@@ -233,11 +265,14 @@ function updatePlayer(p) {
   }
 
   const r = catRect(p);
-  if (!potion.taken && rectsTouch(r, potion)) {
+  if (!potion.taken && !potion.consumed && rectsTouch(r, potionRect())) {
     potion.taken = true;
     potion.carrierId = p.id;
-    tree.open = false;
     log.info(`${p.nickname} coge la pocion`);
+  }
+
+  if (!tree.open && potion.carrierId === p.id && rectsTouch(r, tree)) {
+    openTreeWithPotion(p);
   }
 
   p.x = clamp(p.x, cat.w * 0.5, map.width - cat.w * 0.5);
@@ -249,7 +284,9 @@ function resetWorldIfRoomEmpty() {
   if (players.size === 0) {
     potion.taken = false;
     potion.carrierId = null;
+    potion.consumed = false;
     tree.open = false;
+    tree.openedAt = 0;
   }
 }
 
@@ -262,7 +299,9 @@ function removeClient(ws, why) {
     if (potion.carrierId === c.id) {
       potion.taken = false;
       potion.carrierId = null;
+      potion.consumed = false;
       tree.open = false;
+      tree.openedAt = 0;
     }
 
     log.info(`${nick} sale (${why})`);
@@ -358,7 +397,9 @@ function handleMessage(ws, raw) {
     players.clear();
     potion.taken = false;
     potion.carrierId = null;
+    potion.consumed = false;
     tree.open = false;
+    tree.openedAt = 0;
     sendPlayerList();
     return;
   }
