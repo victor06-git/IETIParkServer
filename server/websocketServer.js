@@ -1,5 +1,8 @@
 const WebSocket = require('ws');
 const winston = require('winston');
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const log = winston.createLogger({
@@ -93,9 +96,9 @@ function round(v) {
 function rectsTouch(a, b) {
   const EPS = 0.001;
   return a.x < b.x + b.w - EPS &&
-         a.x + a.w > b.x + EPS &&
-         a.y < b.y + b.h - EPS &&
-         a.y + a.h > b.y + EPS;
+    a.x + a.w > b.x + EPS &&
+    a.y < b.y + b.h - EPS &&
+    a.y + a.h > b.y + EPS;
 }
 
 function catRect(p, x = p.x, y = p.y) {
@@ -535,4 +538,57 @@ wss.on('connection', ws => {
   ws.on('message', raw => handleMessage(ws, raw));
   ws.on('close', () => removeClient(ws, 'close'));
   ws.on('error', err => log.warn(err.message));
+});
+
+// HTTP Server con Express
+const app = express();
+const SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
+
+// Endpoint para servir la web con el QR apuntando a la APK
+app.get('/web', (req, res) => {
+  const apkUrl = `https://${SERVER_HOST}/apk`;
+  const indexPath = path.join(__dirname, '..', 'web', 'index.html');
+
+  fs.readFile(indexPath, 'utf8', (err, data) => {
+    if (err) {
+      log.error('Error al leer index.html:', err);
+      return res.status(500).send('Error al cargar la web');
+    }
+
+    // Reemplazar el URL del QR por el de descarga de la APK
+    let html = data.replace(
+      /text:\s*"[^"]*"/,
+      `text: "${apkUrl}"`
+    );
+
+    // Reemplazar el texto mostrado del URL
+    html = html.replace(
+      /apk\.pico2\.com/,
+      apkUrl
+    );
+
+    res.send(html);
+  });
+});
+
+// Endpoint para descargar la APK
+app.get('/apk', (req, res) => {
+  const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
+
+  if (!fs.existsSync(apkPath)) {
+    log.error('APK no encontrada en:', apkPath);
+    return res.status(404).send('APK no encontrada');
+  }
+
+  res.download(apkPath, 'drymophylakes.apk');
+});
+
+// Servir archivos estáticos de la web (imágenes, qrcode.min.js, etc)
+app.use(express.static(path.join(__dirname, '..', 'web')));
+
+// Iniciar servidor HTTP
+app.listen(HTTP_PORT, () => {
+  log.info(`Servidor HTTP escuchando en http://localhost:${HTTP_PORT}`);
+  log.info(`Accede a la web con QR en: http://localhost:${HTTP_PORT}/web`);
+  log.info(`Descarga APK en: http://localhost:${HTTP_PORT}/apk/download`);
 });

@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drymophýlakes</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <script src="qrcode.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: #1a1a2e;
+            font-family: 'Press Start 2P', monospace;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            image-rendering: pixelated;
+        }
+
+        /* Fondo en capas pixel */
+        .bg {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+        }
+        .bg-layer {
+            position: absolute;
+            inset: 0;
+            background-repeat: repeat-x;
+            background-size: auto 100%;
+            background-position: center bottom;
+        }
+        .bg-layer-3 { background-image: url('media/bg/BG_3_1.png'); }
+        .bg-layer-2 { background-image: url('media/bg/BG_2_1.png'); opacity: 0.85; }
+        .bg-layer-1 { background-image: url('media/bg/BG_1_1.png'); }
+
+        /* Overlay oscuro para contraste */
+        .bg-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(to bottom, rgba(26,26,46,0.45) 0%, rgba(26,26,46,0.7) 100%);
+        }
+
+        /* Contenido */
+        .content {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 32px;
+            padding: 24px;
+        }
+
+        /* Título */
+        .title-box {
+            text-align: center;
+        }
+        .title-box h1 {
+            font-size: clamp(1.2rem, 3.5vw, 2.2rem);
+            color: #fffbe2;
+            text-shadow:
+                3px 3px 0 #2c4333,
+                6px 6px 0 #1a1a2e;
+            letter-spacing: 3px;
+            line-height: 1.6;
+        }
+        .title-box .subtitle {
+            font-size: clamp(0.55rem, 1.5vw, 0.85rem);
+            color: #b7cae0;
+            margin-top: 12px;
+            letter-spacing: 4px;
+        }
+
+        /* Panel QR — protagonista */
+        .qr-panel {
+            background: #fffbe2;
+            border: 4px solid #2c4333;
+            box-shadow:
+                0 0 0 4px #fffbe2,
+                0 0 0 8px #2c4333,
+                8px 8px 0 8px #1a1a2e;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .qr-label {
+            font-size: 0.5rem;
+            color: #2c4333;
+            letter-spacing: 2px;
+        }
+
+        #qrcode canvas,
+        #qrcode img {
+            display: block;
+            image-rendering: pixelated;
+        }
+
+        .qr-url {
+            font-size: 0.35rem;
+            color: #3f4674;
+            text-align: center;
+            max-width: 260px;
+            word-break: break-all;
+            line-height: 1.8;
+        }
+
+        /* Barra de suelo pixel */
+        .ground {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 32px;
+            background: repeating-linear-gradient(
+                90deg,
+                #2c4333 0px, #2c4333 16px,
+                #3a5c42 16px, #3a5c42 32px
+            );
+            border-top: 4px solid #fffbe2;
+            z-index: 5;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="bg">
+        <div class="bg-layer bg-layer-3"></div>
+        <div class="bg-layer bg-layer-2"></div>
+        <div class="bg-layer bg-layer-1"></div>
+        <div class="bg-overlay"></div>
+    </div>
+
+    <div class="content">
+        <div class="title-box">
+            <h1>DRYMOPHÝLAKES</h1>
+            <p class="subtitle">GUARDIANES DEL BOSQUE</p>
+        </div>
+
+        <div class="qr-panel">
+            <span class="qr-label">[ ESCANEA AQUÍ ]</span>
+            <div id="qrcode"></div>
+            <p class="qr-url">hackupc-2026.devpost.com</p>
+        </div>
+    </div>
+
+
+    <script>
+        new QRCode(document.getElementById("qrcode"), {
+            text: "https://hackupc-2026.devpost.com/?ref_feature=challenge&ref_medium=your-open-hackathons&ref_content=Recently+ended",
+            width: 220,
+            height: 220,
+            colorDark: "#2c4333",
+            colorLight: "#fffbe2",
+            correctLevel: QRCode.CorrectLevel.H
+        });
+    </script>
+</body>
+</html>
