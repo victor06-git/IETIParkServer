@@ -3,7 +3,7 @@ const winston = require('winston');
 require('dotenv').config();
 
 const log = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
+  level: process.env.LOG_LEVEL,
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.printf(x => `${x.timestamp} ${x.level}: ${x.message}`)
@@ -11,7 +11,7 @@ const log = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
-const PORT = Number(process.env.SERVER_PORT || 3000);
+const PORT = Number(process.env.SERVER_PORT);
 const MAX_PLAYERS = 8;
 const FPS = 30;
 const DT = 1 / FPS;
@@ -36,6 +36,10 @@ const goal = {
   crossedAt: 0,
   changeReason: ""
 };
+
+// Punto a partir del cual consideramos que un gato ya ha cruzado el Ã¡rbol.
+// Antes de abrirse, el Ã¡rbol frena al jugador en este borde izquierdo.
+const DOOR_CROSS_X = tree.x;
 
 // Obstáculos fijos del mapa.
 // La rampa visible está en la capa de tiles entre columnas 8..14 y filas 8..10.
@@ -192,9 +196,12 @@ function updateGoalState() {
   }
 
   for (const p of players.values()) {
-    if (!p.crossedDoor && p.x > tree.x + tree.w + cat.w * 0.5) {
+    // Cuenta como cruzado cuando el lado izquierdo del gato pasa el borde
+    // donde antes empezaba el Ã¡rbol-obstÃ¡culo.
+    const playerLeft = p.x - cat.w * 0.5;
+    if (!p.crossedDoor && playerLeft >= DOOR_CROSS_X) {
       p.crossedDoor = true;
-      log.info(` ha cruzado la puerta`);
+      log.info(`${p.nickname} ha cruzado el arbol`);
     }
   }
 
@@ -205,8 +212,8 @@ function updateGoalState() {
     goal.allPlayersPassed = true;
     goal.shouldChangeScreen = true;
     goal.crossedAt = Date.now();
-    goal.changeReason = "ALL_PLAYERS_CROSSED_DOOR";
-    log.info("Todos los jugadores han cruzado la puerta. La app ya puede preparar el cambio de pantalla.");
+    goal.changeReason = "ALL_PLAYERS_CROSSED_TREE";
+    log.info("Todos los jugadores han cruzado el arbol. La app ya puede preparar el cambio de pantalla.");
   } else if (!everyonePassed) {
     goal.allPlayersPassed = false;
     goal.shouldChangeScreen = false;
