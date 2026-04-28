@@ -17,18 +17,32 @@ const FPS = 30;
 const DT = 1 / FPS;
 const PING_EACH_MS = 30000;
 
-const map = { width: 320, height: 180, floorY: 164 };
-const cat = { w: 16, h: 16, speed: 90, gravity: 900, jump: 310, maxFall: 520 };
-const potion = { x: 181, y: 118, w: 45, h: 45, taken: false, carrierId: null, consumed: false };
+const map = { width: 320, height: 180, floorY: 176 };
+
+// x/y del jugador representa el centro inferior del gato.
+// La hitbox es más grande que antes para que los gatos no se solapen visualmente.
+const cat = { w: 26, h: 28, speed: 90, gravity: 900, jump: 310, maxFall: 520 };
+
+// La poción se recoge con una caja pequeña, acorde al tamaño con el que se pinta.
+const potion = { x: 181, y: 118, w: 24, h: 24, taken: false, carrierId: null, consumed: false };
+
+// Árbol cerrado. Mientras no esté abierto bloquea el paso.
 const tree = { x: 241, y: 90, w: 90, h: 90, open: false, openedAt: 0 };
 
+// Obstáculos fijos del mapa.
+// La rampa visible está en la capa de tiles entre columnas 8..14 y filas 8..10.
+// Se trata como una caja sólida: si una esquina de la hitbox toca, bloquea.
+const solidZones = [
+  { name: 'rampa', x: 126, y: 132, w: 112, h: 48 }
+];
+
 const spawns = [
-  { x: 29, y: 148 }, { x: 47, y: 148 }, { x: 65, y: 148 }, { x: 83, y: 148 },
-  { x: 101, y: 148 }, { x: 119, y: 148 }, { x: 137, y: 148 }, { x: 155, y: 148 }
+  { x: 22, y: 148 }, { x: 50, y: 148 }, { x: 78, y: 148 }, { x: 106, y: 148 },
+  { x: 134, y: 148 }, { x: 162, y: 148 }, { x: 190, y: 148 }, { x: 218, y: 148 }
 ];
 
 const clients = new Map(); // ws -> { id, viewer }
-const players = new Map(); // id -> jugador real
+const players = new Map(); // id -> player
 let nextId = 1;
 
 function cleanNick(value) {
@@ -65,21 +79,19 @@ function round(v) {
 }
 
 function rectsTouch(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  const EPS = 0.001;
+  return a.x < b.x + b.w - EPS &&
+         a.x + a.w > b.x + EPS &&
+         a.y < b.y + b.h - EPS &&
+         a.y + a.h > b.y + EPS;
 }
 
 function catRect(p, x = p.x, y = p.y) {
   return { x: x - cat.w * 0.5, y: y - cat.h, w: cat.w, h: cat.h };
 }
 
-
 function potionRect() {
-  return {
-    x: potion.x - potion.w * 0.5,
-    y: potion.y - potion.h * 0.5,
-    w: potion.w,
-    h: potion.h
-  };
+  return { x: potion.x - potion.w * 0.5, y: potion.y - potion.h * 0.5, w: potion.w, h: potion.h };
 }
 
 function openTreeWithPotion(player) {
@@ -143,89 +155,109 @@ function sendState() {
   broadcast({ type: 'STATE', players: playersForClient(), world: worldForClient() });
 }
 
-function wallBlocks(rect, player) {
-  if (rect.x < 0 || rect.x + rect.w > map.width) return true;
-  if (tree.open) return false;
-
-  // El árbol bloquea a todos, excepto al jugador que lleva la poción.
-  // Cuando ese jugador lo toca, cura el árbol y se abre el paso.
-  if (rectsTouch(rect, tree)) {
-    if (player && potion.carrierId === player.id && !potion.consumed) {
-      openTreeWithPotion(player);
-      return false;
-    }
-    return true;
-  }
-  return false;
-}
-
-function touchesOther(player, x, y) {
-  const r = catRect(player, x, y);
+function playerBoxes(player) {
+  const boxes = [];
   for (const other of players.values()) {
-    if (other.id !== player.id && rectsTouch(r, catRect(other))) return true;
+    if (other.id !== player.id) boxes.push({ name: 'player', ...catRect(other) });
   }
-  return false;
+  return boxes;
 }
 
-function canMoveTo(player, x, y) {
-  const r = catRect(player, x, y);
-  return !wallBlocks(r, player) && !touchesOther(player, x, y);
+function mapBoxes() {
+  const boxes = [
+    { name: 'left_wall', x: -50, y: -100, w: 50, h: 400 },
+    { name: 'right_wall', x: map.width, y: -100, w: 50, h: 400 },
+    ...solidZones
+  ];
+  if (!tree.open) boxes.push({ name: 'tree', x: tree.x, y: tree.y, w: tree.w, h: tree.h });
+  return boxes;
+}
+
+function collisionBoxes(player) {
+  return [...mapBoxes(), ...playerBoxes(player)];
+}
+
+function touchesClosedTree(player, rect) {
+  return !tree.open && !potion.consumed && potion.carrierId === player.id && rectsTouch(rect, tree);
+}
+
+function moveX(player, dx) {
+  if (dx === 0) return;
+
+  let nextX = player.x + dx;
+  let r = catRect(player, nextX, player.y);
+
+  if (touchesClosedTree(player, r)) openTreeWithPotion(player);
+
+  for (const box of collisionBoxes(player)) {
+    if (box.name === 'tree' && tree.open) continue;
+    if (!rectsTouch(r, box)) continue;
+
+    if (dx > 0) nextX = box.x - cat.w * 0.5;
+    else nextX = box.x + box.w + cat.w * 0.5;
+
+    player.vx = 0;
+    r = catRect(player, nextX, player.y);
+  }
+
+  player.x = clamp(nextX, cat.w * 0.5, map.width - cat.w * 0.5);
+}
+
+function moveY(player, dy) {
+  if (dy === 0) return;
+
+  let nextY = player.y + dy;
+  let r = catRect(player, player.x, nextY);
+  player.grounded = false;
+
+  if (touchesClosedTree(player, r)) openTreeWithPotion(player);
+
+  for (const box of collisionBoxes(player)) {
+    if (box.name === 'tree' && tree.open) continue;
+    if (!rectsTouch(r, box)) continue;
+
+    if (dy > 0) {
+      // Cayendo: el pie queda justo encima del obstáculo o jugador.
+      nextY = box.y;
+      player.grounded = true;
+    } else {
+      // Subiendo: la cabeza queda justo bajo el obstáculo.
+      nextY = box.y + box.h + cat.h;
+    }
+
+    player.vy = 0;
+    r = catRect(player, player.x, nextY);
+  }
+
+  if (nextY >= map.floorY) {
+    nextY = map.floorY;
+    player.vy = 0;
+    player.grounded = true;
+  }
+
+  player.y = clamp(nextY, 0, map.floorY);
 }
 
 function isStandingOnSomething(player) {
   if (Math.abs(player.y - map.floorY) <= 0.5) return true;
 
-  const bottom = player.y;
-  const left = player.x - cat.w * 0.5;
-  const right = player.x + cat.w * 0.5;
-
-  for (const other of players.values()) {
-    if (other.id === player.id) continue;
-    const otherTop = other.y - cat.h;
-    const otherLeft = other.x - cat.w * 0.5;
-    const otherRight = other.x + cat.w * 0.5;
-    const overlapsX = right > otherLeft && left < otherRight;
-    if (overlapsX && Math.abs(bottom - otherTop) <= 1.2) return true;
+  const foot = { x: player.x - cat.w * 0.5 + 1, y: player.y, w: cat.w - 2, h: 1.5 };
+  for (const box of collisionBoxes(player)) {
+    if (box.name === 'tree' && tree.open) continue;
+    const top = { x: box.x, y: box.y - 0.5, w: box.w, h: 1.5 };
+    if (rectsTouch(foot, top)) return true;
   }
-
   return false;
-}
-
-function findPlayerBelow(player, nextY) {
-  if (player.vy <= 0) return null;
-
-  const currentBottom = player.y;
-  const nextBottom = nextY;
-  let best = null;
-  let bestTop = Infinity;
-
-  for (const other of players.values()) {
-    if (other.id === player.id) continue;
-
-    const otherTop = other.y - cat.h;
-    const horizontalTouch =
-      player.x + cat.w * 0.5 > other.x - cat.w * 0.5 &&
-      player.x - cat.w * 0.5 < other.x + cat.w * 0.5;
-
-    if (horizontalTouch && currentBottom <= otherTop && nextBottom >= otherTop && otherTop < bestTop) {
-      best = other;
-      bestTop = otherTop;
-    }
-  }
-
-  return best ? bestTop : null;
 }
 
 function updatePlayer(p) {
   const input = p.input || { moveX: 0, jumpPressed: false, jumpHeld: false };
 
-  const moveX = clamp(Number(input.moveX || 0), -1, 1);
-  p.vx = moveX * cat.speed;
-  if (moveX < 0) p.facingRight = false;
-  if (moveX > 0) p.facingRight = true;
+  const move = clamp(Number(input.moveX || 0), -1, 1);
+  p.vx = move * cat.speed;
+  if (move < 0) p.facingRight = false;
+  if (move > 0) p.facingRight = true;
 
-  // Recalcula el apoyo justo antes de saltar. Así, si un gato está encima de otro,
-  // el de arriba puede saltar aunque el suelo no esté debajo.
   p.grounded = isStandingOnSomething(p);
 
   if (input.jumpPressed && p.grounded) {
@@ -238,31 +270,9 @@ function updatePlayer(p) {
     p.vy = Math.min(cat.maxFall, p.vy + cat.gravity * DT);
   }
 
-  const nextX = p.x + p.vx * DT;
-  if (canMoveTo(p, nextX, p.y)) {
-    p.x = nextX;
-  } else {
-    p.vx = 0;
-  }
-
-  let nextY = p.y + p.vy * DT;
-  const playerTop = findPlayerBelow(p, nextY);
-
-  if (playerTop !== null) {
-    p.y = playerTop;
-    p.vy = 0;
-    p.grounded = true;
-  } else if (nextY >= map.floorY) {
-    p.y = map.floorY;
-    p.vy = 0;
-    p.grounded = true;
-  } else if (canMoveTo(p, p.x, nextY)) {
-    p.y = nextY;
-    p.grounded = false;
-  } else {
-    // Choque vertical: si pega con otro por debajo ya se ha resuelto antes.
-    p.vy = 0;
-  }
+  // Ejes separados: las esquinas del hitbox también bloquean.
+  moveX(p, p.vx * DT);
+  moveY(p, p.vy * DT);
 
   const r = catRect(p);
   if (!potion.taken && !potion.consumed && rectsTouch(r, potionRect())) {
