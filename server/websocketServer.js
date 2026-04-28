@@ -173,6 +173,8 @@ function startWebSocketServer(room) {
   });
 }
 
+
+// -- endpointttt
 function startHttpServer() {
   const app = express();
 
@@ -205,7 +207,6 @@ function startHttpServer() {
 
   app.use(express.static(path.join(__dirname, '..', 'web')));
 
-  // Importante: solo hay un app.listen. Esto arregla el EADDRINUSE provocado por arrancarlo dos veces.
   const httpServer = app.listen(HTTP_PORT, () => {
     log.info(`Servidor HTTP escuchando en http://localhost:${HTTP_PORT}`);
     log.info(`Web con QR: http://localhost:${HTTP_PORT}/web`);
