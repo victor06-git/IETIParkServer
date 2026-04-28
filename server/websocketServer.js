@@ -29,6 +29,14 @@ const potion = { x: 181, y: 118, w: 24, h: 24, taken: false, carrierId: null, co
 // Árbol cerrado. Mientras no esté abierto bloquea el paso.
 const tree = { x: 241, y: 90, w: 90, h: 90, open: false, openedAt: 0 };
 
+const goal = {
+  unlocked: false,
+  allPlayersPassed: false,
+  shouldChangeScreen: false,
+  crossedAt: 0,
+  changeReason: ""
+};
+
 // Obstáculos fijos del mapa.
 // La rampa visible está en la capa de tiles entre columnas 8..14 y filas 8..10.
 // Se trata como una caja sólida: si una esquina de la hitbox toca, bloquea.
@@ -100,6 +108,11 @@ function openTreeWithPotion(player) {
   potion.carrierId = null;
   tree.open = true;
   tree.openedAt = Date.now();
+  goal.unlocked = true;
+  goal.allPlayersPassed = false;
+  goal.shouldChangeScreen = false;
+  goal.changeReason = "";
+  for (const p of players.values()) p.crossedDoor = false;
   log.info(`${player.nickname} cura el arbol con la pocion`);
 }
 
@@ -127,6 +140,7 @@ function playersForClient() {
     facingRight: p.facingRight,
     grounded: p.grounded,
     hasPotion: potion.carrierId === p.id,
+    crossedDoor: p.crossedDoor === true,
     viewer: false
   }));
 }
@@ -143,8 +157,69 @@ function worldForClient() {
     doorX: tree.x,
     doorY: tree.y,
     doorWidth: tree.w,
-    doorHeight: tree.h
+    doorHeight: tree.h,
+    levelUnlocked: goal.unlocked,
+    allPlayersPassed: goal.allPlayersPassed,
+    shouldChangeScreen: goal.shouldChangeScreen,
+    crossedPlayers: crossedPlayersForClient(),
+    totalPlayers: players.size,
+    passedPlayers: countPlayersPastDoor(),
+    changeReason: goal.changeReason
   };
+}
+
+function crossedPlayersForClient() {
+  return [...players.values()].map(p => ({
+    id: p.id,
+    nickname: p.nickname,
+    crossedDoor: p.crossedDoor === true
+  }));
+}
+
+function countPlayersPastDoor() {
+  let total = 0;
+  for (const p of players.values()) {
+    if (p.crossedDoor === true) total++;
+  }
+  return total;
+}
+
+function updateGoalState() {
+  if (!goal.unlocked) {
+    goal.allPlayersPassed = false;
+    goal.shouldChangeScreen = false;
+    return;
+  }
+
+  for (const p of players.values()) {
+    if (!p.crossedDoor && p.x > tree.x + tree.w + cat.w * 0.5) {
+      p.crossedDoor = true;
+      log.info(` ha cruzado la puerta`);
+    }
+  }
+
+  const hasPlayers = players.size > 0;
+  const everyonePassed = hasPlayers && [...players.values()].every(p => p.crossedDoor === true);
+
+  if (everyonePassed && !goal.shouldChangeScreen) {
+    goal.allPlayersPassed = true;
+    goal.shouldChangeScreen = true;
+    goal.crossedAt = Date.now();
+    goal.changeReason = "ALL_PLAYERS_CROSSED_DOOR";
+    log.info("Todos los jugadores han cruzado la puerta. La app ya puede preparar el cambio de pantalla.");
+  } else if (!everyonePassed) {
+    goal.allPlayersPassed = false;
+    goal.shouldChangeScreen = false;
+    goal.changeReason = "";
+  }
+}
+
+function resetGoalState() {
+  goal.unlocked = false;
+  goal.allPlayersPassed = false;
+  goal.shouldChangeScreen = false;
+  goal.crossedAt = 0;
+  goal.changeReason = "";
 }
 
 function sendPlayerList() {
@@ -297,6 +372,7 @@ function resetWorldIfRoomEmpty() {
     potion.consumed = false;
     tree.open = false;
     tree.openedAt = 0;
+    resetGoalState();
   }
 }
 
@@ -312,6 +388,7 @@ function removeClient(ws, why) {
       potion.consumed = false;
       tree.open = false;
       tree.openedAt = 0;
+      resetGoalState();
     }
 
     log.info(`${nick} sale (${why})`);
@@ -349,6 +426,7 @@ function handleJoin(ws, msg, oldClient) {
     grounded: true,
     facingRight: true,
     anim: 'idle',
+    crossedDoor: false,
     input: { moveX: 0, jumpPressed: false, jumpHeld: false }
   };
 
@@ -410,6 +488,7 @@ function handleMessage(ws, raw) {
     potion.consumed = false;
     tree.open = false;
     tree.openedAt = 0;
+    resetGoalState();
     sendPlayerList();
     return;
   }
@@ -422,6 +501,7 @@ log.info(`Servidor escuchando en ${PORT}`);
 
 setInterval(() => {
   for (const p of players.values()) updatePlayer(p);
+  updateGoalState();
   sendState();
 }, 1000 / FPS);
 
