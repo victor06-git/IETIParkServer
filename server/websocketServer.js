@@ -1,5 +1,6 @@
 const WebSocket = require('ws');
 const winston = require('winston');
+const { MongoClient, ObjectId } = require('mongodb');
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
@@ -15,6 +16,8 @@ const log = winston.createLogger({
 });
 
 const PORT = Number(process.env.SERVER_PORT);
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017';
+const DB_NAME = 'ietipark2';
 const MAX_PLAYERS = 8;
 const FPS = 30;
 const DT = 1 / FPS;
@@ -40,13 +43,11 @@ const goal = {
   changeReason: ""
 };
 
-// Punto a partir del cual consideramos que un gato ya ha cruzado el Ã¡rbol.
-// Antes de abrirse, el Ã¡rbol frena al jugador en este borde izquierdo.
+// Punto a partir del cual consideramos que un gato ya ha cruzado el árbol.
+// Antes de abrirse, el árbol frena al jugador en este borde izquierdo.
 const DOOR_CROSS_X = tree.x;
 
 // Obstáculos fijos del mapa.
-// La rampa visible está en la capa de tiles entre columnas 8..14 y filas 8..10.
-// Se trata como una caja sólida: si una esquina de la hitbox toca, bloquea.
 const solidZones = [
   { name: 'rampa', x: 126, y: 132, w: 112, h: 48 }
 ];
@@ -59,6 +60,147 @@ const spawns = [
 const clients = new Map(); // ws -> { id, viewer }
 const players = new Map(); // id -> player
 let nextId = 1;
+
+// ─── MongoDB ────────────────────────────────────────────────────────────────
+
+let db = null;
+let currentPartidaId = null;
+const partidaStartTime = { value: null };
+
+async function connectMongo() {
+  try {
+    const client = new MongoClient(MONGO_URI);
+    await client.connect();
+    db = client.db(DB_NAME);
+    log.info(`MongoDB conectado a la base de datos "${DB_NAME}"`);
+    await ensureIndexes();
+  } catch (err) {
+    log.warn(`MongoDB no disponible: ${err.message}. El servidor funciona sin persistencia.`);
+    db = null;
+  }
+}
+
+async function ensureIndexes() {
+  if (!db) return;
+  try {
+    // Índice en jugadores por nickname
+    await db.collection('jugadores').createIndex({ nickname: 1 }, { unique: true });
+    // Índice en partida_jugador por partidaId + jugadorId
+    await db.collection('partida_jugador').createIndex({ partidaId: 1, jugadorId: 1 }, { unique: true });
+    log.info('Índices MongoDB verificados');
+  } catch (err) {
+    log.warn(`Error creando índices: ${err.message}`);
+  }
+}
+
+/**
+ * Obtiene o crea un jugador en la colección "jugadores".
+ * Estructura: { _id, nickname, id_categoria }
+ * id_categoria por defecto ObjectId de "Junior" si no existe en la colección categorias.
+ */
+async function upsertJugador(nickname) {
+  if (!db) return null;
+  try {
+    // Busca la categoría por defecto (Junior)
+    let categoria = await db.collection('categorias').findOne({ nombre: 'Junior' });
+    if (!categoria) {
+      // Si no existe ninguna categoría, crea las tres por defecto según el diagrama
+      const categorias = [
+        { nombre: 'Junior', color: 'Azul' },
+        { nombre: 'Senior', color: 'Morado' },
+        { nombre: 'Expert', color: 'Dorado' }
+      ];
+      const result = await db.collection('categorias').insertMany(categorias);
+      categoria = { _id: Object.values(result.insertedIds)[0] };
+      log.info('Categorías por defecto creadas en MongoDB');
+    }
+
+    // Upsert del jugador: si ya existe devuelve el existente, si no lo crea
+    const resultado = await db.collection('jugadores').findOneAndUpdate(
+      { nickname },
+      { $setOnInsert: { nickname, id_categoria: categoria._id } },
+      { upsert: true, returnDocument: 'after' }
+    );
+    return resultado;
+  } catch (err) {
+    log.warn(`upsertJugador error: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Crea una nueva partida en la colección "partidas".
+ * Estructura: { _id, fecha, duracion }
+ * duracion se rellena al finalizar la partida.
+ */
+async function iniciarPartida() {
+  if (!db) return;
+  try {
+    const resultado = await db.collection('partidas').insertOne({
+      fecha: new Date(),
+      duracion: null  // se actualiza al terminar
+    });
+    currentPartidaId = resultado.insertedId;
+    partidaStartTime.value = Date.now();
+    log.info(`Partida iniciada en MongoDB con id ${currentPartidaId}`);
+  } catch (err) {
+    log.warn(`iniciarPartida error: ${err.message}`);
+  }
+}
+
+/**
+ * Registra la entrada de un jugador en la partida actual (partida_jugador).
+ * Estructura: { _id, partidaId, jugadorId, pocion_obtenida }
+ */
+async function registrarJugadorEnPartida(jugadorMongoId) {
+  if (!db || !currentPartidaId || !jugadorMongoId) return;
+  try {
+    await db.collection('partida_jugador').updateOne(
+      { partidaId: currentPartidaId, jugadorId: jugadorMongoId },
+      { $setOnInsert: { partidaId: currentPartidaId, jugadorId: jugadorMongoId, pocion_obtenida: 0 } },
+      { upsert: true }
+    );
+  } catch (err) {
+    log.warn(`registrarJugadorEnPartida error: ${err.message}`);
+  }
+}
+
+/**
+ * Marca pocion_obtenida = 1 para el jugador que recogió la poción.
+ */
+async function marcarPotionObtenida(jugadorMongoId) {
+  if (!db || !currentPartidaId || !jugadorMongoId) return;
+  try {
+    await db.collection('partida_jugador').updateOne(
+      { partidaId: currentPartidaId, jugadorId: jugadorMongoId },
+      { $set: { pocion_obtenida: 1 } }
+    );
+    log.info(`pocion_obtenida marcada para jugador ${jugadorMongoId}`);
+  } catch (err) {
+    log.warn(`marcarPotionObtenida error: ${err.message}`);
+  }
+}
+
+/**
+ * Finaliza la partida actualizando la duración en segundos.
+ */
+async function finalizarPartida() {
+  if (!db || !currentPartidaId || !partidaStartTime.value) return;
+  try {
+    const duracion = Math.round((Date.now() - partidaStartTime.value) / 1000);
+    await db.collection('partidas').updateOne(
+      { _id: currentPartidaId },
+      { $set: { duracion } }
+    );
+    log.info(`Partida ${currentPartidaId} finalizada. Duración: ${duracion}s`);
+    currentPartidaId = null;
+    partidaStartTime.value = null;
+  } catch (err) {
+    log.warn(`finalizarPartida error: ${err.message}`);
+  }
+}
+
+// ─── Fin MongoDB ─────────────────────────────────────────────────────────────
 
 function cleanNick(value) {
   const nick = String(value || 'Player').trim().replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 16);
@@ -121,6 +263,11 @@ function openTreeWithPotion(player) {
   goal.changeReason = "";
   for (const p of players.values()) p.crossedDoor = false;
   log.info(`${player.nickname} cura el arbol con la pocion`);
+
+  // Registrar en MongoDB quién obtuvo la poción
+  if (player.mongoId) {
+    marcarPotionObtenida(player.mongoId);
+  }
 }
 
 function send(ws, msg) {
@@ -199,8 +346,6 @@ function updateGoalState() {
   }
 
   for (const p of players.values()) {
-    // Cuenta como cruzado cuando el lado izquierdo del gato pasa el borde
-    // donde antes empezaba el Ã¡rbol-obstÃ¡culo.
     const playerLeft = p.x - cat.w * 0.5;
     if (!p.crossedDoor && playerLeft >= DOOR_CROSS_X) {
       p.crossedDoor = true;
@@ -217,6 +362,9 @@ function updateGoalState() {
     goal.crossedAt = Date.now();
     goal.changeReason = "ALL_PLAYERS_CROSSED_TREE";
     log.info("Todos los jugadores han cruzado el arbol. La app ya puede preparar el cambio de pantalla.");
+
+    // Finalizar la partida en MongoDB cuando todos han cruzado
+    finalizarPartida();
   } else if (!everyonePassed) {
     goal.allPlayersPassed = false;
     goal.shouldChangeScreen = false;
@@ -302,11 +450,9 @@ function moveY(player, dy) {
     if (!rectsTouch(r, box)) continue;
 
     if (dy > 0) {
-      // Cayendo: el pie queda justo encima del obstáculo o jugador.
       nextY = box.y;
       player.grounded = true;
     } else {
-      // Subiendo: la cabeza queda justo bajo el obstáculo.
       nextY = box.y + box.h + cat.h;
     }
 
@@ -355,7 +501,6 @@ function updatePlayer(p) {
     p.vy = Math.min(cat.maxFall, p.vy + cat.gravity * DT);
   }
 
-  // Ejes separados: las esquinas del hitbox también bloquean.
   moveX(p, p.vx * DT);
   moveY(p, p.vy * DT);
 
@@ -408,7 +553,7 @@ function removeClient(ws, why) {
   clients.delete(ws);
 }
 
-function handleJoin(ws, msg, oldClient) {
+async function handleJoin(ws, msg, oldClient) {
   if (isViewer(msg)) {
     clients.set(ws, { id: null, viewer: true });
     send(ws, { type: 'JOIN_OK', id: '', nickname: 'viewer', cat: 0, viewer: true });
@@ -424,10 +569,20 @@ function handleJoin(ws, msg, oldClient) {
   const id = oldClient.id || `p${nextId++}`;
   const assignedCat = freeCat();
   const spawn = spawns[assignedCat - 1] || spawns[0];
+  const nickname = freeNick(msg.nickname);
+
+  // Registrar/obtener jugador en MongoDB
+  const jugadorDoc = await upsertJugador(nickname);
+  const mongoId = jugadorDoc ? jugadorDoc._id : null;
+
+  // Si es el primer jugador, iniciar partida en MongoDB
+  if (players.size === 0) {
+    await iniciarPartida();
+  }
 
   const p = {
     id,
-    nickname: freeNick(msg.nickname),
+    nickname,
     cat: assignedCat,
     x: spawn.x,
     y: spawn.y,
@@ -437,12 +592,17 @@ function handleJoin(ws, msg, oldClient) {
     facingRight: true,
     anim: 'idle',
     crossedDoor: false,
+    mongoId,   // referencia al _id de MongoDB para operaciones posteriores
     input: { moveX: 0, jumpPressed: false, jumpHeld: false }
   };
 
   players.set(id, p);
   clients.set(ws, { id, viewer: false });
   send(ws, { type: 'JOIN_OK', id, nickname: p.nickname, cat: p.cat, viewer: false });
+
+  // Registrar participación en la partida actual
+  await registrarJugadorEnPartida(mongoId);
+
   sendPlayerList();
   log.info(`${p.nickname} entra como cat${p.cat}`);
 }
@@ -506,89 +666,146 @@ function handleMessage(ws, raw) {
   send(ws, { type: 'ERROR', msg: `Tipo desconocido: ${msg.type}` });
 }
 
-const wss = new WebSocket.Server({ port: PORT });
-log.info(`Servidor escuchando en ${PORT}`);
+// ─── Arranque ────────────────────────────────────────────────────────────────
 
-setInterval(() => {
-  for (const p of players.values()) updatePlayer(p);
-  updateGoalState();
-  sendState();
-}, 1000 / FPS);
+connectMongo().then(() => {
+  const wss = new WebSocket.Server({ port: PORT });
+  log.info(`Servidor escuchando en ${PORT}`);
 
-setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (ws.isAlive === false) {
-      removeClient(ws, 'timeout');
-      ws.terminate();
-      return;
-    }
-    ws.isAlive = false;
-    ws.ping();
+  setInterval(() => {
+    for (const p of players.values()) updatePlayer(p);
+    updateGoalState();
+    sendState();
+  }, 1000 / FPS);
+
+  setInterval(() => {
+    wss.clients.forEach(ws => {
+      if (ws.isAlive === false) {
+        removeClient(ws, 'timeout');
+        ws.terminate();
+        return;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, PING_EACH_MS);
+
+  wss.on('connection', ws => {
+    ws.isAlive = true;
+    clients.set(ws, { id: null, viewer: true });
+
+    send(ws, { type: 'WELCOME', msg: 'ok', world: worldForClient() });
+    send(ws, { type: 'PLAYER_LIST', players: playersForClient(), world: worldForClient() });
+
+    ws.on('pong', () => { ws.isAlive = true; });
+    ws.on('message', raw => handleMessage(ws, raw));
+    ws.on('close', () => removeClient(ws, 'close'));
+    ws.on('error', err => log.warn(err.message));
   });
-}, PING_EACH_MS);
 
-wss.on('connection', ws => {
-  ws.isAlive = true;
-  clients.set(ws, { id: null, viewer: true });
+  // HTTP Server con Express
+  const app = express();
+  const SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
 
-  send(ws, { type: 'WELCOME', msg: 'ok', world: worldForClient() });
-  send(ws, { type: 'PLAYER_LIST', players: playersForClient(), world: worldForClient() });
+  // Endpoint para servir la web con el QR apuntando a la APK
+  app.get('/web', (req, res) => {
+    const apkUrl = `https://${SERVER_HOST}/apk`;
+    const indexPath = path.join(__dirname, '..', 'web', 'index.html');
 
-  ws.on('pong', () => { ws.isAlive = true; });
-  ws.on('message', raw => handleMessage(ws, raw));
-  ws.on('close', () => removeClient(ws, 'close'));
-  ws.on('error', err => log.warn(err.message));
-});
+    fs.readFile(indexPath, 'utf8', (err, data) => {
+      if (err) {
+        log.error('Error al leer index.html:', err);
+        return res.status(500).send('Error al cargar la web');
+      }
 
-// HTTP Server con Express
-const app = express();
-const SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
+      // Reemplazar el URL del QR por el de descarga de la APK
+      let html = data.replace(
+        /text:\s*"[^"]*"/,
+        `text: "${apkUrl}"`
+      );
 
-// Endpoint para servir la web con el QR apuntando a la APK
-app.get('/web', (req, res) => {
-  const apkUrl = `https://${SERVER_HOST}/apk`;
-  const indexPath = path.join(__dirname, '..', 'web', 'index.html');
+      // Reemplazar el texto mostrado del URL
+      html = html.replace(
+        /apk\.pico2\.com/,
+        apkUrl
+      );
 
-  fs.readFile(indexPath, 'utf8', (err, data) => {
-    if (err) {
-      log.error('Error al leer index.html:', err);
-      return res.status(500).send('Error al cargar la web');
+      res.send(html);
+    });
+  });
+
+  // Endpoint para descargar la APK
+  app.get('/apk', (req, res) => {
+    const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
+
+    if (!fs.existsSync(apkPath)) {
+      log.error('APK no encontrada en:', apkPath);
+      return res.status(404).send('APK no encontrada');
     }
 
-    // Reemplazar el URL del QR por el de descarga de la APK
-    let html = data.replace(
-      /text:\s*"[^"]*"/,
-      `text: "${apkUrl}"`
-    );
-
-    // Reemplazar el texto mostrado del URL
-    html = html.replace(
-      /apk\.pico2\.com/,
-      apkUrl
-    );
-
-    res.send(html);
+    res.download(apkPath, 'drymophylakes.apk');
   });
-});
 
-// Endpoint para descargar la APK
-app.get('/apk', (req, res) => {
-  const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
+  // Servir archivos estáticos de la web (imágenes, qrcode.min.js, etc)
+  app.use(express.static(path.join(__dirname, '..', 'web')));
 
-  if (!fs.existsSync(apkPath)) {
-    log.error('APK no encontrada en:', apkPath);
-    return res.status(404).send('APK no encontrada');
-  }
+  // Iniciar servidor HTTP
+  app.listen(HTTP_PORT, () => {
+    log.info(`Servidor HTTP escuchando en http://localhost:${HTTP_PORT}`);
+    log.info(`Accede a la web con QR en: http://localhost:${HTTP_PORT}/web`);
+    log.info(`Descarga APK en: http://localhost:${HTTP_PORT}/apk/download`);
+  });
 
-  res.download(apkPath, 'drymophylakes.apk');
-});
+  // HTTP Server con Express
+  app = express();
+  SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
 
-// Servir archivos estáticos de la web (imágenes, qrcode.min.js, etc)
-app.use(express.static(path.join(__dirname, '..', 'web')));
+  // Endpoint para servir la web con el QR apuntando a la APK
+  app.get('/web', (req, res) => {
+    const apkUrl = `https://${SERVER_HOST}/apk`;
+    const indexPath = path.join(__dirname, '..', 'web', 'index.html');
 
-// Iniciar servidor HTTP
-app.listen(HTTP_PORT, () => {
-  log.info(`Servidor HTTP escuchando en http://localhost:${HTTP_PORT}`);
-  log.info(`Accede a la web con QR en: http://localhost:${HTTP_PORT}/web`);
-  log.info(`Descarga APK en: http://localhost:${HTTP_PORT}/apk/download`);
+    fs.readFile(indexPath, 'utf8', (err, data) => {
+      if (err) {
+        log.error('Error al leer index.html:', err);
+        return res.status(500).send('Error al cargar la web');
+      }
+
+      // Reemplazar el URL del QR por el de descarga de la APK
+      let html = data.replace(
+        /text:\s*"[^"]*"/,
+        `text: "${apkUrl}"`
+      );
+
+      // Reemplazar el texto mostrado del URL
+      html = html.replace(
+        /apk\.pico2\.com/,
+        apkUrl
+      );
+
+      res.send(html);
+    });
+  });
+
+  // Endpoint para descargar la APK
+  app.get('/apk', (req, res) => {
+    const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
+
+    if (!fs.existsSync(apkPath)) {
+      log.error('APK no encontrada en:', apkPath);
+      return res.status(404).send('APK no encontrada');
+    }
+
+    res.download(apkPath, 'drymophylakes.apk');
+  });
+
+  // Servir archivos estáticos de la web (imágenes, qrcode.min.js, etc)
+  app.use(express.static(path.join(__dirname, '..', 'web')));
+
+  // Iniciar servidor HTTP
+  app.listen(HTTP_PORT, () => {
+    log.info(`Servidor HTTP escuchando en http://localhost:${HTTP_PORT}`);
+    log.info(`Accede a la web con QR en: http://localhost:${HTTP_PORT}/web`);
+    log.info(`Descarga APK en: http://localhost:${HTTP_PORT}/apk/download`);
+  });
 });
