@@ -19,7 +19,7 @@ const PING_EACH_MS = 30000;
 
 const map = { width: 320, height: 180, floorY: 164 };
 const cat = { w: 16, h: 16, speed: 90, gravity: 900, jump: 310, maxFall: 520 };
-const potion = { x: 157, y: 160, w: 24, h: 24, taken: false, carrierId: null };
+const potion = { x: 157, y: 145, w: 18, h: 18, taken: false, carrierId: null };
 const tree = { x: 262, y: 153, w: 48, h: 80, open: false };
 
 const spawns = [
@@ -124,7 +124,7 @@ function sendState() {
 
 function wallBlocks(rect) {
   if (rect.x < 0 || rect.x + rect.w > map.width) return true;
-  return !tree.open && rectsTouch(rect, tree);
+  return rectsTouch(rect, tree);
 }
 
 function touchesOther(player, x, y) {
@@ -138,6 +138,25 @@ function touchesOther(player, x, y) {
 function canMoveTo(player, x, y) {
   const r = catRect(player, x, y);
   return !wallBlocks(r) && !touchesOther(player, x, y);
+}
+
+function isStandingOnSomething(player) {
+  if (Math.abs(player.y - map.floorY) <= 0.5) return true;
+
+  const bottom = player.y;
+  const left = player.x - cat.w * 0.5;
+  const right = player.x + cat.w * 0.5;
+
+  for (const other of players.values()) {
+    if (other.id === player.id) continue;
+    const otherTop = other.y - cat.h;
+    const otherLeft = other.x - cat.w * 0.5;
+    const otherRight = other.x + cat.w * 0.5;
+    const overlapsX = right > otherLeft && left < otherRight;
+    if (overlapsX && Math.abs(bottom - otherTop) <= 1.2) return true;
+  }
+
+  return false;
 }
 
 function findPlayerBelow(player, nextY) {
@@ -173,6 +192,10 @@ function updatePlayer(p) {
   if (moveX < 0) p.facingRight = false;
   if (moveX > 0) p.facingRight = true;
 
+  // Recalcula el apoyo justo antes de saltar. Así, si un gato está encima de otro,
+  // el de arriba puede saltar aunque el suelo no esté debajo.
+  p.grounded = isStandingOnSomething(p);
+
   if (input.jumpPressed && p.grounded) {
     p.vy = -cat.jump;
     p.grounded = false;
@@ -205,6 +228,7 @@ function updatePlayer(p) {
     p.y = nextY;
     p.grounded = false;
   } else {
+    // Choque vertical: si pega con otro por debajo ya se ha resuelto antes.
     p.vy = 0;
   }
 
@@ -212,7 +236,7 @@ function updatePlayer(p) {
   if (!potion.taken && rectsTouch(r, potion)) {
     potion.taken = true;
     potion.carrierId = p.id;
-    tree.open = true; 
+    tree.open = false;
     log.info(`${p.nickname} coge la pocion`);
   }
 
