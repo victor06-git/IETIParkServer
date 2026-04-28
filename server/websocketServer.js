@@ -758,12 +758,12 @@ connectMongo().then(() => {
   });
 
   // HTTP Server con Express
-  app = express();
-  SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
+  // app = express();
+  // SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
 
   // Endpoint para servir la web con el QR apuntando a la APK
   app.get('/web', (req, res) => {
-    const apkUrl = `https://${SERVER_HOST}/apk`;
+    const apkUrl = `https://${SERVER_PORT}/apk`;
     const indexPath = path.join(__dirname, '..', 'web', 'index.html');
 
     fs.readFile(indexPath, 'utf8', (err, data) => {
