@@ -1,247 +1,207 @@
 const WebSocket = require('ws');
 const winston = require('winston');
-const express = require('express');
-const path = require('path');
-const fs = require('fs');
 require('dotenv').config();
 
-const mongo = require('./mongo');
-const { GameRoom, MAX_PLAYERS, FPS, isViewer } = require('./gameLogic');
-
-const log = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.printf(x => `${x.timestamp} ${x.level}: ${x.message}`)
-  ),
-  transports: [new winston.transports.Console()]
+// ─── Logger ───
+const logger = winston.createLogger({
+    level: 'debug',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.printf(({ timestamp, level, message }) => `${timestamp} ${level}: ${message}`)
+    ),
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: './data/logs/server.log' })
+    ],
 });
 
-const PORT = Number(process.env.SERVER_PORT || 3000);
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017';
-const SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
-const PING_EACH_MS = 30000;
+// ─── Config ───
+const SERVER_PORT = process.env.SERVER_PORT;
+const players = new Map(); // nickname → ws
 
-const clients = new Map(); // ws -> { id, viewer }
-
-function send(ws, msg) {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-  }
+// ─── Utils ───
+function uniqueNickname(nickname) {
+    if (!players.has(nickname)) return nickname;
+    let i = 1;
+    while (players.has(`${nickname}_${i}`)) i++;
+    return `${nickname}_${i}`;
 }
 
-function broadcast(msg) {
-  const text = JSON.stringify(msg);
-  for (const ws of clients.keys()) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(text);
-  }
-}
-
-function sendPlayerList(room) {
-  broadcast({
-    type: 'PLAYER_LIST',
-    players: room.playersForClient(),
-    world: room.worldForClient()
-  });
-}
-
-function sendState(room) {
-  broadcast({
-    type: 'STATE',
-    players: room.playersForClient(),
-    world: room.worldForClient()
-  });
-}
-
-function removeClient(ws, reason, room) {
-  const client = clients.get(ws);
-  if (client && client.id) {
-    const removed = room.removePlayer(client.id, reason);
-    if (removed) sendPlayerList(room);
-  }
-  clients.delete(ws);
-}
-
-async function handleJoin(ws, msg, client, room) {
-  if (isViewer(msg)) {
-    clients.set(ws, { id: null, viewer: true });
-    send(ws, { type: 'JOIN_OK', id: '', nickname: 'viewer', cat: 0, viewer: true });
-    send(ws, { type: 'PLAYER_LIST', players: room.playersForClient(), world: room.worldForClient() });
-    return;
-  }
-
-  if (room.isFull() && !client.id) {
-    send(ws, { type: 'ERROR', msg: 'Sala llena' });
-    return;
-  }
-
-  const player = await room.addPlayer(msg, client.id);
-  clients.set(ws, { id: player.id, viewer: false });
-
-  send(ws, {
-    type: 'JOIN_OK',
-    id: player.id,
-    nickname: player.nickname,
-    cat: player.cat,
-    viewer: false
-  });
-
-  sendPlayerList(room);
-}
-
-function handleMessage(ws, raw, room) {
-  let msg;
-  try {
-    msg = JSON.parse(raw);
-  } catch (err) {
-    send(ws, { type: 'ERROR', msg: 'JSON invalido' });
-    return;
-  }
-
-  const client = clients.get(ws) || { id: null, viewer: true };
-
-  if (msg.type === 'JOIN') {
-    handleJoin(ws, msg, client, room).catch(err => {
-      log.warn(`JOIN error: ${err.message}`);
-      send(ws, { type: 'ERROR', msg: 'No se ha podido entrar en la sala' });
-    });
-    return;
-  }
-
-  if (msg.type === 'INPUT') {
-    if (client.id) room.setInput(client.id, msg);
-    return;
-  }
-
-  if (msg.type === 'MOVE') {
-    if (client.id) room.setMoveInput(client.id, msg);
-    return;
-  }
-
-  if (msg.type === 'GET_PLAYERS') {
-    send(ws, { type: 'PLAYER_LIST', players: room.playersForClient(), world: room.worldForClient() });
-    return;
-  }
-
-  if (msg.type === 'LEAVE') {
-    removeClient(ws, 'leave', room);
-    return;
-  }
-
-  if (msg.type === 'RESET_PLAYERS') {
-    room.resetPlayersAndWorld();
-    sendPlayerList(room);
-    return;
-  }
-
-  send(ws, { type: 'ERROR', msg: `Tipo desconocido: ${msg.type}` });
-}
-
-function startWebSocketServer(httpServer, room) {
-  const wss = new WebSocket.Server({ server: httpServer });
-  log.info(`Servidor WebSocket adjunto al servidor HTTP`);
-
-  setInterval(() => {
-    room.tick();
-    sendState(room);
-  }, 1000 / FPS);
-
-  setInterval(() => {
-    wss.clients.forEach(ws => {
-      if (ws.isAlive === false) {
-        removeClient(ws, 'timeout', room);
-        ws.terminate();
-        return;
-      }
-      ws.isAlive = false;
-      ws.ping();
-    });
-  }, PING_EACH_MS);
-
-  wss.on('connection', ws => {
-    ws.isAlive = true;
-    clients.set(ws, { id: null, viewer: true });
-
-    send(ws, { type: 'WELCOME', msg: 'ok', world: room.worldForClient() });
-    send(ws, { type: 'PLAYER_LIST', players: room.playersForClient(), world: room.worldForClient() });
-
-    ws.on('pong', () => { ws.isAlive = true; });
-    ws.on('message', raw => handleMessage(ws, raw, room));
-    ws.on('close', () => removeClient(ws, 'close', room));
-    ws.on('error', err => log.warn(err.message));
-  });
-}
-
-
-function startHttpServer() {
-  const app = express();
-
-  app.get('/web', (req, res) => {
-    const apkUrl = `https://${SERVER_HOST}/apk`;
-    const indexPath = path.join(__dirname, '..', 'web', 'index.html');
-
-    fs.readFile(indexPath, 'utf8', (err, data) => {
-      if (err) {
-        log.error(`Error al leer index.html: ${err.message}`);
-        return res.status(500).send('Error al cargar la web');
-      }
-
-      let html = data.replace(/text:\s*"[^"]*"/, `text: "${apkUrl}"`);
-      html = html.replace(/apk\.pico2\.com/g, apkUrl);
-      res.send(html);
-    });
-  });
-
-  app.get('/apk', (req, res) => {
-    const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
-
-    if (!fs.existsSync(apkPath)) {
-      log.error(`APK no encontrada en: ${apkPath}`);
-      return res.status(404).send('APK no encontrada');
+function broadcast(data) {
+    const json = JSON.stringify(data);
+    for (const { ws } of players.values()) {
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(json);
+        }
     }
-
-    res.download(apkPath, 'drymophylakes.apk');
-  });
-
-  app.use(express.static(path.join(__dirname, '..', 'web')));
-
-  const httpServer = app.listen(PORT, () => {
-    log.info(`Servidor escuchando en http://localhost:${PORT}`);
-    log.info(`Web con QR: http://localhost:${PORT}/web`);
-    log.info(`APK: http://localhost:${PORT}/apk`);
-  });
-
-  httpServer.on('error', err => {
-    if (err.code === 'EADDRINUSE') {
-      log.error(`El puerto ${PORT} ya está en uso.`);
-    } else {
-      log.error(`Error HTTP: ${err.message}`);
-    }
-    process.exit(1);
-  });
-
-  return httpServer;
 }
 
-async function main() {
-  await mongo.connectMongo({ uri: MONGO_URI, log });
-
-  const room = new GameRoom({
-    log,
-    mongo: {
-      upsertJugador: nickname => mongo.upsertJugador(nickname, log),
-      startMatch: () => mongo.startMatch(log),
-      registerPlayerInMatch: id => mongo.registerPlayerInMatch(id, log),
-      markPotionObtained: id => mongo.markPotionObtained(id, log),
-      finishMatch: () => mongo.finishMatch(log)
-    }
-  });
-
-  const httpServer = startHttpServer();
-  startWebSocketServer(httpServer, room);
+function broadcastPlayerList() {
+    const playerList = Array.from(players.entries()).map(([nickname, data]) => ({
+        nickname,
+        cat: data.cat || ''
+    }));
+    broadcast({ type: 'PLAYER_LIST', players: playerList });
 }
 
-main().catch(err => {
-  log.error(err.stack || err.message);
-  process.exit(1);
-});
+// ─── Heartbeat ───
+const HEARTBEAT_INTERVAL = 30000;
+
+// ─── Server ───
+async function iniciarServidor() {
+    try {
+        const wss = new WebSocket.Server({ port: SERVER_PORT });
+        logger.info(`Servidor arrancado en puerto ${SERVER_PORT}`);
+
+        const interval = setInterval(() => {
+            wss.clients.forEach((ws) => {
+                if (ws.isAlive === false) {
+                    for (const [nick, data] of players.entries()) {
+                        if (data.ws === ws) {
+                            players.delete(nick);
+                            logger.info(`Jugador eliminado por timeout: ${nick}`);
+                        }
+                    }
+                    broadcastPlayerList();
+                    return ws.terminate();
+                }
+                ws.isAlive = false;
+                ws.ping();
+            });
+        }, HEARTBEAT_INTERVAL);
+
+        wss.on('close', () => clearInterval(interval));
+
+        wss.on('connection', (ws) => {
+            let nickname = null;
+            ws.isAlive = true;
+
+            ws.on('pong', () => { ws.isAlive = true; });
+
+            logger.info('Nuevo cliente conectado');
+
+            // Bienvenida
+            ws.send(JSON.stringify({ type: 'WELCOME', msg: 'Conexión aceptada' }));
+
+            // Lista actual
+            ws.send(JSON.stringify({
+                type: 'PLAYER_LIST',
+                players: Array.from(players.entries()).map(([nickname, data]) => ({
+                    nickname,
+                    cat: data.cat || ''
+                }))
+            }));
+
+            ws.on('message', (data) => {
+                let message;
+                try {
+                    message = JSON.parse(data);
+                } catch (err) {
+                    logger.error('JSON inválido');
+                    return;
+                }
+
+                logger.info(`Mensaje recibido: ${JSON.stringify(message)}`);
+
+                switch (message.type) {
+
+                    case 'JOIN': {
+                        const requested = message.nickname;
+                        nickname = uniqueNickname(requested);
+
+                        players.set(nickname, { ws, x: -1, y: -1, cat: message.cat || '' });
+
+                        ws.send(JSON.stringify({
+                            type: 'JOIN_OK',
+                            nickname
+                        }));
+
+                        logger.info(`Jugador registrado: ${nickname}`);
+                        broadcastPlayerList();
+                        break;
+                    }
+
+                    case 'MOVE': {
+                        if (!nickname) return;
+
+                        const playerData = players.get(nickname);
+                        if (!playerData) return;
+
+                        const dir   = message.dir   || 'IDLE';
+                        const x     = typeof message.x === 'number' ? message.x : playerData.x;
+                        const y     = typeof message.y === 'number' ? message.y : playerData.y;
+                        const anim  = message.anim  || '';
+                        const frame = message.frame || 0;
+
+                        playerData.x = x;
+                        playerData.y = y;
+
+                        broadcast({
+                            type: 'MOVE',
+                            nickname,
+                            dir,
+                            x,
+                            y,
+                            anim,
+                            frame
+                        });
+
+                        logger.info(`MOVE de ${nickname}: dir=${dir} x=${x} y=${y}`);
+                        break;
+                    }
+
+                    case 'GET_PLAYERS': {
+                        ws.send(JSON.stringify({
+                            type: 'PLAYER_LIST',
+                            players: Array.from(players.entries()).map(([nickname, data]) => ({
+                                nickname,
+                                cat: data.cat || ''
+                            }))
+                        }));
+                        break;
+                    }
+
+                    case 'LEAVE': {
+                        if (nickname && players.has(nickname)) {
+                            players.delete(nickname);
+                            logger.info(`Jugador salió: ${nickname}`);
+                            broadcastPlayerList();
+                            nickname = null;
+                        }
+                        break;
+                    }
+
+                    case 'RESET_PLAYERS': {
+                        players.clear();
+                        logger.info('Lista de jugadores reseteada');
+                        broadcastPlayerList();
+                        break;
+                    }
+
+                    default:
+                        logger.warn(`Tipo desconocido: ${message.type}`);
+                        break;
+                }
+            });
+
+            ws.on('close', () => {
+                if (nickname && players.has(nickname)) {
+                    players.delete(nickname);
+                    logger.info(`Jugador desconectado: ${nickname}`);
+                    broadcastPlayerList();
+                } else {
+                    logger.info('Cliente desconectado (sin JOIN)');
+                }
+            });
+
+            ws.on('error', (err) => {
+                logger.error(`Error en conexión: ${err}`);
+            });
+        });
+
+    } catch (err) {
+        logger.error(`Error al iniciar servidor: ${err.message}`);
+    }
+}
+
+iniciarServidor();
