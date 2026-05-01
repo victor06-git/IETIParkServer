@@ -1,207 +1,282 @@
 const WebSocket = require('ws');
 const winston = require('winston');
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
-// ─── Logger ───
-const logger = winston.createLogger({
-    level: 'debug',
-    format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.printf(({ timestamp, level, message }) => `${timestamp} ${level}: ${message}`)
-    ),
-    transports: [
-        new winston.transports.Console(),
-        new winston.transports.File({ filename: './data/logs/server.log' })
-    ],
+const mongo = require('./mongo');
+const { GameRoom, FPS, isViewer } = require('./gameLogic');
+
+const SERVER_PORT = Number(process.env.SERVER_PORT);
+const HTTP_PORT = process.env.HTTP_PORT;
+const MONGO_URI = process.env.MONGO_URI;
+const SERVER_HOST = process.env.SERVER_HOST;
+const PING_EACH_MS = 30000;
+
+const log = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, level, message }) => `${timestamp} ${level}: ${message}`)
+  ),
+  transports: [new winston.transports.Console()]
 });
 
-// ─── Config ───
-const SERVER_PORT = process.env.SERVER_PORT;
-const players = new Map(); // nickname → ws
+// ws -> { id: string|null, viewer: boolean }
+const clients = new Map();
 
-// ─── Utils ───
-function uniqueNickname(nickname) {
-    if (!players.has(nickname)) return nickname;
-    let i = 1;
-    while (players.has(`${nickname}_${i}`)) i++;
-    return `${nickname}_${i}`;
+function makeMongoApi() {
+  return {
+    upsertJugador: nickname => mongo.upsertJugador(nickname, log),
+    startMatch: () => mongo.startMatch(log),
+    registerPlayerInMatch: playerMongoId => mongo.registerPlayerInMatch(playerMongoId, log),
+    markPotionObtained: playerMongoId => mongo.markPotionObtained(playerMongoId, log),
+    finishMatch: () => mongo.finishMatch(log)
+  };
 }
 
-function broadcast(data) {
-    const json = JSON.stringify(data);
-    for (const { ws } of players.values()) {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(json);
-        }
+function send(ws, message) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
+  }
+}
+
+function broadcast(message) {
+  const text = JSON.stringify(message);
+  for (const ws of clients.keys()) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(text);
     }
+  }
 }
 
-function broadcastPlayerList() {
-    const playerList = Array.from(players.entries()).map(([nickname, data]) => ({
-        nickname,
-        cat: data.cat || ''
-    }));
-    broadcast({ type: 'PLAYER_LIST', players: playerList });
+function playerListMessage(room) {
+  return {
+    type: 'PLAYER_LIST',
+    players: room.playersForClient(),
+    world: room.worldForClient()
+  };
 }
 
-// ─── Heartbeat ───
-const HEARTBEAT_INTERVAL = 30000;
+function stateMessage(room) {
+  return {
+    type: 'STATE',
+    players: room.playersForClient(),
+    world: room.worldForClient()
+  };
+}
 
-// ─── Server ───
-async function iniciarServidor() {
-    try {
-        const wss = new WebSocket.Server({ port: SERVER_PORT });
-        logger.info(`Servidor arrancado en puerto ${SERVER_PORT}`);
+function sendPlayerList(room) {
+  broadcast(playerListMessage(room));
+}
 
-        const interval = setInterval(() => {
-            wss.clients.forEach((ws) => {
-                if (ws.isAlive === false) {
-                    for (const [nick, data] of players.entries()) {
-                        if (data.ws === ws) {
-                            players.delete(nick);
-                            logger.info(`Jugador eliminado por timeout: ${nick}`);
-                        }
-                    }
-                    broadcastPlayerList();
-                    return ws.terminate();
-                }
-                ws.isAlive = false;
-                ws.ping();
-            });
-        }, HEARTBEAT_INTERVAL);
+function sendState(room) {
+  broadcast(stateMessage(room));
+}
 
-        wss.on('close', () => clearInterval(interval));
+function removeClient(ws, reason, room) {
+  const client = clients.get(ws);
+  if (client && client.id) {
+    const removed = room.removePlayer(client.id, reason);
+    if (removed) sendPlayerList(room);
+  }
+  clients.delete(ws);
+}
 
-        wss.on('connection', (ws) => {
-            let nickname = null;
-            ws.isAlive = true;
+async function handleJoin(ws, msg, client, room) {
+  // El menú de Android y flutter_viewer entran como viewer:
+  // ven PLAYER_LIST/STATE, pero no ocupan gato ni salen en players[].
+  if (isViewer(msg)) {
+    clients.set(ws, { id: null, viewer: true });
+    send(ws, {
+      type: 'JOIN_OK',
+      id: '',
+      nickname: 'viewer',
+      cat: 0,
+      viewer: true
+    });
+    send(ws, playerListMessage(room));
+    return;
+  }
 
-            ws.on('pong', () => { ws.isAlive = true; });
+  if (room.isFull() && !client.id) {
+    send(ws, { type: 'ERROR', msg: 'Sala llena' });
+    return;
+  }
 
-            logger.info('Nuevo cliente conectado');
+  const player = await room.addPlayer(msg, client.id);
+  clients.set(ws, { id: player.id, viewer: false });
 
-            // Bienvenida
-            ws.send(JSON.stringify({ type: 'WELCOME', msg: 'Conexión aceptada' }));
+  send(ws, {
+    type: 'JOIN_OK',
+    id: player.id,
+    nickname: player.nickname,
+    cat: player.cat,
+    viewer: false
+  });
 
-            // Lista actual
-            ws.send(JSON.stringify({
-                type: 'PLAYER_LIST',
-                players: Array.from(players.entries()).map(([nickname, data]) => ({
-                    nickname,
-                    cat: data.cat || ''
-                }))
-            }));
+  sendPlayerList(room);
+}
 
-            ws.on('message', (data) => {
-                let message;
-                try {
-                    message = JSON.parse(data);
-                } catch (err) {
-                    logger.error('JSON inválido');
-                    return;
-                }
+function handleInput(ws, msg, room) {
+  const client = clients.get(ws);
+  if (!client || !client.id) return;
+  room.setInput(client.id, msg);
+}
 
-                logger.info(`Mensaje recibido: ${JSON.stringify(message)}`);
+function handleMove(ws, msg, room) {
+  // Compatibilidad con clientes viejos: la app nueva usa INPUT.
+  const client = clients.get(ws);
+  if (!client || !client.id) return;
+  room.setMoveInput(client.id, msg);
+}
 
-                switch (message.type) {
+function handleMessage(ws, raw, room) {
+  let msg;
+  try {
+    msg = JSON.parse(raw);
+  } catch (err) {
+    send(ws, { type: 'ERROR', msg: 'JSON invalido' });
+    return;
+  }
 
-                    case 'JOIN': {
-                        const requested = message.nickname;
-                        nickname = uniqueNickname(requested);
+  const client = clients.get(ws) || { id: null, viewer: true };
 
-                        players.set(nickname, { ws, x: -1, y: -1, cat: message.cat || '' });
+  switch (msg.type) {
+    case 'JOIN':
+      handleJoin(ws, msg, client, room).catch(err => {
+        log.warn(`JOIN error: ${err.message}`);
+        send(ws, { type: 'ERROR', msg: 'No se ha podido entrar en la sala' });
+      });
+      break;
 
-                        ws.send(JSON.stringify({
-                            type: 'JOIN_OK',
-                            nickname
-                        }));
+    case 'INPUT':
+      handleInput(ws, msg, room);
+      break;
 
-                        logger.info(`Jugador registrado: ${nickname}`);
-                        broadcastPlayerList();
-                        break;
-                    }
+    case 'MOVE':
+      handleMove(ws, msg, room);
+      break;
 
-                    case 'MOVE': {
-                        if (!nickname) return;
+    case 'GET_PLAYERS':
+      send(ws, playerListMessage(room));
+      break;
 
-                        const playerData = players.get(nickname);
-                        if (!playerData) return;
+    case 'LEAVE':
+      removeClient(ws, 'leave', room);
+      break;
 
-                        const dir   = message.dir   || 'IDLE';
-                        const x     = typeof message.x === 'number' ? message.x : playerData.x;
-                        const y     = typeof message.y === 'number' ? message.y : playerData.y;
-                        const anim  = message.anim  || '';
-                        const frame = message.frame || 0;
+    case 'RESET_PLAYERS':
+      room.resetPlayersAndWorld();
+      sendPlayerList(room);
+      log.info('Sala reiniciada manualmente');
+      break;
 
-                        playerData.x = x;
-                        playerData.y = y;
+    default:
+      send(ws, { type: 'ERROR', msg: `Tipo desconocido: ${msg.type}` });
+      break;
+  }
+}
 
-                        broadcast({
-                            type: 'MOVE',
-                            nickname,
-                            dir,
-                            x,
-                            y,
-                            anim,
-                            frame
-                        });
+function startWebSocketServer(room) {
+  const wss = new WebSocket.Server({ port: SERVER_PORT });
+  log.info(`Servidor WebSocket escuchando en ${SERVER_PORT}`);
 
-                        logger.info(`MOVE de ${nickname}: dir=${dir} x=${x} y=${y}`);
-                        break;
-                    }
+  setInterval(() => {
+    room.tick();
+    sendState(room);
+  }, 1000 / FPS);
 
-                    case 'GET_PLAYERS': {
-                        ws.send(JSON.stringify({
-                            type: 'PLAYER_LIST',
-                            players: Array.from(players.entries()).map(([nickname, data]) => ({
-                                nickname,
-                                cat: data.cat || ''
-                            }))
-                        }));
-                        break;
-                    }
+  setInterval(() => {
+    wss.clients.forEach(ws => {
+      if (ws.isAlive === false) {
+        removeClient(ws, 'timeout', room);
+        ws.terminate();
+        return;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    });
+  }, PING_EACH_MS);
 
-                    case 'LEAVE': {
-                        if (nickname && players.has(nickname)) {
-                            players.delete(nickname);
-                            logger.info(`Jugador salió: ${nickname}`);
-                            broadcastPlayerList();
-                            nickname = null;
-                        }
-                        break;
-                    }
+  wss.on('connection', ws => {
+    ws.isAlive = true;
+    clients.set(ws, { id: null, viewer: true });
 
-                    case 'RESET_PLAYERS': {
-                        players.clear();
-                        logger.info('Lista de jugadores reseteada');
-                        broadcastPlayerList();
-                        break;
-                    }
+    send(ws, { type: 'WELCOME', msg: 'ok', world: room.worldForClient() });
+    send(ws, playerListMessage(room));
 
-                    default:
-                        logger.warn(`Tipo desconocido: ${message.type}`);
-                        break;
-                }
-            });
+    ws.on('pong', () => { ws.isAlive = true; });
+    ws.on('message', raw => handleMessage(ws, raw, room));
+    ws.on('close', () => removeClient(ws, 'close', room));
+    ws.on('error', err => log.warn(`WebSocket error: ${err.message}`));
+  });
 
-            ws.on('close', () => {
-                if (nickname && players.has(nickname)) {
-                    players.delete(nickname);
-                    logger.info(`Jugador desconectado: ${nickname}`);
-                    broadcastPlayerList();
-                } else {
-                    logger.info('Cliente desconectado (sin JOIN)');
-                }
-            });
+  wss.on('error', err => {
+    log.error(`No se pudo iniciar WebSocket en ${SERVER_PORT}: ${err.message}`);
+    process.exitCode = 1;
+  });
+}
 
-            ws.on('error', (err) => {
-                logger.error(`Error en conexión: ${err}`);
-            });
-        });
+function startHttpServer() {
+  if (!HTTP_PORT) return;
 
-    } catch (err) {
-        logger.error(`Error al iniciar servidor: ${err.message}`);
+  const app = express();
+  const webDir = path.join(__dirname, '..', 'web');
+  const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
+
+  app.get('/web', (req, res) => {
+    const indexPath = path.join(webDir, 'index.html');
+    const apkUrl = `https://${SERVER_HOST}/apk`;
+
+    fs.readFile(indexPath, 'utf8', (err, html) => {
+      if (err) {
+        log.warn(`No se pudo leer index.html: ${err.message}`);
+        res.status(500).send('Error al cargar la web');
+        return;
+      }
+
+      const updated = html
+        .replace(/text:\s*"[^"]*"/, `text: "${apkUrl}"`)
+        .replace(/apk\.pico2\.com/g, apkUrl);
+
+      res.send(updated);
+    });
+  });
+
+  app.get('/apk', (req, res) => {
+    if (!fs.existsSync(apkPath)) {
+      res.status(404).send('APK no encontrada');
+      return;
     }
+    res.download(apkPath, 'ieti-park.apk');
+  });
+
+  app.use(express.static(webDir));
+
+  const httpServer = app.listen(HTTP_PORT, () => {
+    log.info(`Servidor HTTP escuchando en ${HTTP_PORT}`);
+  });
+
+  httpServer.on('error', err => {
+    log.error(`No se pudo iniciar HTTP en ${HTTP_PORT}: ${err.message}`);
+  });
 }
 
-iniciarServidor();
+async function main() {
+  await mongo.connectMongo({ uri: MONGO_URI, log });
+
+  const room = new GameRoom({
+    log,
+    mongo: makeMongoApi()
+  });
+
+  startWebSocketServer(room);
+  startHttpServer();
+}
+
+main().catch(err => {
+  log.error(`Error arrancando servidor: ${err.stack || err.message}`);
+  process.exit(1);
+});
