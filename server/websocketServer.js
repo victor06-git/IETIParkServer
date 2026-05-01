@@ -8,42 +8,31 @@ require('dotenv').config();
 const mongo = require('./mongo');
 const { GameRoom, FPS, isViewer } = require('./gameLogic');
 
-const SERVER_PORT = Number(process.env.SERVER_PORT);
-const HTTP_PORT = process.env.HTTP_PORT;
-const MONGO_URI = process.env.MONGO_URI;
-const SERVER_HOST = process.env.SERVER_HOST;
-const PING_EACH_MS = 30000;
-
 const log = winston.createLogger({
-  level: 'info',
+  level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(
     winston.format.timestamp(),
-    winston.format.printf(({ timestamp, level, message }) => `${timestamp} ${level}: ${message}`)
+    winston.format.printf(x => `${x.timestamp} ${x.level}: ${x.message}`)
   ),
   transports: [new winston.transports.Console()]
 });
 
-// ws -> { id: string|null, viewer: boolean }
-const clients = new Map();
+const SERVER_PORT = Number(process.env.SERVER_PORT);
+const HTTP_PORT = Number(process.env.HTTP_PORT);
+const MONGO_URI = process.env.MONGO_URI;
+const SERVER_HOST = process.env.SERVER_HOST;
+const PING_EACH_MS = 30000;
 
-function makeMongoApi() {
-  return {
-    upsertJugador: nickname => mongo.upsertJugador(nickname, log),
-    startMatch: () => mongo.startMatch(log),
-    registerPlayerInMatch: playerMongoId => mongo.registerPlayerInMatch(playerMongoId, log),
-    markPotionObtained: playerMongoId => mongo.markPotionObtained(playerMongoId, log),
-    finishMatch: () => mongo.finishMatch(log)
-  };
-}
+const clients = new Map(); // ws -> { id, viewer }
 
-function send(ws, message) {
+function send(ws, msg) {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(message));
+    ws.send(JSON.stringify(msg));
   }
 }
 
-function broadcast(message) {
-  const text = JSON.stringify(message);
+function broadcast(msg) {
+  const text = JSON.stringify(msg);
   for (const ws of clients.keys()) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(text);
@@ -51,28 +40,20 @@ function broadcast(message) {
   }
 }
 
-function playerListMessage(room) {
-  return {
+function sendPlayerList(room) {
+  broadcast({
     type: 'PLAYER_LIST',
     players: room.playersForClient(),
     world: room.worldForClient()
-  };
-}
-
-function stateMessage(room) {
-  return {
-    type: 'STATE',
-    players: room.playersForClient(),
-    world: room.worldForClient()
-  };
-}
-
-function sendPlayerList(room) {
-  broadcast(playerListMessage(room));
+  });
 }
 
 function sendState(room) {
-  broadcast(stateMessage(room));
+  broadcast({
+    type: 'STATE',
+    players: room.playersForClient(),
+    world: room.worldForClient()
+  });
 }
 
 function removeClient(ws, reason, room) {
@@ -85,8 +66,6 @@ function removeClient(ws, reason, room) {
 }
 
 async function handleJoin(ws, msg, client, room) {
-  // El menú de Android y flutter_viewer entran como viewer:
-  // ven PLAYER_LIST/STATE, pero no ocupan gato ni salen en players[].
   if (isViewer(msg)) {
     clients.set(ws, { id: null, viewer: true });
     send(ws, {
@@ -96,7 +75,11 @@ async function handleJoin(ws, msg, client, room) {
       cat: 0,
       viewer: true
     });
-    send(ws, playerListMessage(room));
+    send(ws, {
+      type: 'PLAYER_LIST',
+      players: room.playersForClient(),
+      world: room.worldForClient()
+    });
     return;
   }
 
@@ -119,19 +102,6 @@ async function handleJoin(ws, msg, client, room) {
   sendPlayerList(room);
 }
 
-function handleInput(ws, msg, room) {
-  const client = clients.get(ws);
-  if (!client || !client.id) return;
-  room.setInput(client.id, msg);
-}
-
-function handleMove(ws, msg, room) {
-  // Compatibilidad con clientes viejos: la app nueva usa INPUT.
-  const client = clients.get(ws);
-  if (!client || !client.id) return;
-  room.setMoveInput(client.id, msg);
-}
-
 function handleMessage(ws, raw, room) {
   let msg;
   try {
@@ -143,45 +113,52 @@ function handleMessage(ws, raw, room) {
 
   const client = clients.get(ws) || { id: null, viewer: true };
 
-  switch (msg.type) {
-    case 'JOIN':
-      handleJoin(ws, msg, client, room).catch(err => {
-        log.warn(`JOIN error: ${err.message}`);
-        send(ws, { type: 'ERROR', msg: 'No se ha podido entrar en la sala' });
-      });
-      break;
-
-    case 'INPUT':
-      handleInput(ws, msg, room);
-      break;
-
-    case 'MOVE':
-      handleMove(ws, msg, room);
-      break;
-
-    case 'GET_PLAYERS':
-      send(ws, playerListMessage(room));
-      break;
-
-    case 'LEAVE':
-      removeClient(ws, 'leave', room);
-      break;
-
-    case 'RESET_PLAYERS':
-      room.resetPlayersAndWorld();
-      sendPlayerList(room);
-      log.info('Sala reiniciada manualmente');
-      break;
-
-    default:
-      send(ws, { type: 'ERROR', msg: `Tipo desconocido: ${msg.type}` });
-      break;
+  if (msg.type === 'JOIN') {
+    handleJoin(ws, msg, client, room).catch(err => {
+      log.warn(`JOIN error: ${err.message}`);
+      send(ws, { type: 'ERROR', msg: 'No se ha podido entrar en la sala' });
+    });
+    return;
   }
+
+  if (msg.type === 'INPUT') {
+    if (client.id) room.setInput(client.id, msg);
+    return;
+  }
+
+  if (msg.type === 'MOVE') {
+    if (client.id) room.setMoveInput(client.id, msg);
+    return;
+  }
+
+  if (msg.type === 'GET_PLAYERS') {
+    send(ws, {
+      type: 'PLAYER_LIST',
+      players: room.playersForClient(),
+      world: room.worldForClient()
+    });
+    return;
+  }
+
+  if (msg.type === 'LEAVE') {
+    removeClient(ws, 'leave', room);
+    return;
+  }
+
+  if (msg.type === 'RESET_PLAYERS') {
+    room.resetPlayersAndWorld();
+    sendPlayerList(room);
+    return;
+  }
+
+  send(ws, { type: 'ERROR', msg: `Tipo desconocido: ${msg.type}` });
 }
+
 
 function startWebSocketServer(room) {
   const wss = new WebSocket.Server({ port: SERVER_PORT });
-  log.info(`Servidor WebSocket escuchando en ${SERVER_PORT}`);
+
+  log.info(`Servidor WebSocket escuchando en puerto ${SERVER_PORT}`);
 
   setInterval(() => {
     room.tick();
@@ -204,64 +181,84 @@ function startWebSocketServer(room) {
     ws.isAlive = true;
     clients.set(ws, { id: null, viewer: true });
 
-    send(ws, { type: 'WELCOME', msg: 'ok', world: room.worldForClient() });
-    send(ws, playerListMessage(room));
+    send(ws, {
+      type: 'WELCOME',
+      msg: 'ok',
+      world: room.worldForClient()
+    });
+
+    send(ws, {
+      type: 'PLAYER_LIST',
+      players: room.playersForClient(),
+      world: room.worldForClient()
+    });
 
     ws.on('pong', () => { ws.isAlive = true; });
     ws.on('message', raw => handleMessage(ws, raw, room));
     ws.on('close', () => removeClient(ws, 'close', room));
-    ws.on('error', err => log.warn(`WebSocket error: ${err.message}`));
+    ws.on('error', err => log.warn(err.message));
   });
 
   wss.on('error', err => {
-    log.error(`No se pudo iniciar WebSocket en ${SERVER_PORT}: ${err.message}`);
-    process.exitCode = 1;
+    if (err.code === 'EADDRINUSE') {
+      log.error(`El puerto WebSocket ${SERVER_PORT} ya está en uso.`);
+    } else {
+      log.error(`Error WebSocket: ${err.message}`);
+    }
+    process.exit(1);
   });
 }
 
-function startHttpServer() {
-  if (!HTTP_PORT) return;
 
+function startHttpWebServer() {
   const app = express();
-  const webDir = path.join(__dirname, '..', 'web');
-  const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
 
   app.get('/web', (req, res) => {
-    const indexPath = path.join(webDir, 'index.html');
     const apkUrl = `https://${SERVER_HOST}/apk`;
+    const indexPath = path.join(__dirname, '..', 'web', 'index.html');
 
-    fs.readFile(indexPath, 'utf8', (err, html) => {
+    fs.readFile(indexPath, 'utf8', (err, data) => {
       if (err) {
-        log.warn(`No se pudo leer index.html: ${err.message}`);
-        res.status(500).send('Error al cargar la web');
-        return;
+        log.error(`Error al leer index.html: ${err.message}`);
+        return res.status(500).send('Error al cargar la web');
       }
 
-      const updated = html
-        .replace(/text:\s*"[^"]*"/, `text: "${apkUrl}"`)
-        .replace(/apk\.pico2\.com/g, apkUrl);
+      let html = data.replace(/text:\s*"[^"]*"/, `text: "${apkUrl}"`);
+      html = html.replace(/apk\.pico2\.com/g, apkUrl);
 
-      res.send(updated);
+      res.send(html);
     });
   });
 
   app.get('/apk', (req, res) => {
+    const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
+
     if (!fs.existsSync(apkPath)) {
-      res.status(404).send('APK no encontrada');
-      return;
+      log.error(`APK no encontrada en: ${apkPath}`);
+      return res.status(404).send('APK no encontrada');
     }
-    res.download(apkPath, 'ieti-park.apk');
+
+    res.download(apkPath, 'drymophylakes.apk');
   });
 
-  app.use(express.static(webDir));
+  app.use(express.static(path.join(__dirname, '..', 'web')));
 
   const httpServer = app.listen(HTTP_PORT, () => {
-    log.info(`Servidor HTTP escuchando en ${HTTP_PORT}`);
+    log.info(`Servidor HTTP/web escuchando en puerto ${HTTP_PORT}`);
+    log.info(`Web con QR: http://localhost:${HTTP_PORT}/web`);
+    log.info(`APK: http://localhost:${HTTP_PORT}/apk`);
   });
 
   httpServer.on('error', err => {
-    log.error(`No se pudo iniciar HTTP en ${HTTP_PORT}: ${err.message}`);
+    if (err.code === 'EADDRINUSE') {
+      log.error(`El puerto HTTP ${HTTP_PORT} ya está en uso.`);
+    } else {
+      log.error(`Error HTTP: ${err.message}`);
+    }
+    process.exit(1);
   });
+
+  return httpServer;
 }
 
 async function main() {
@@ -269,14 +266,20 @@ async function main() {
 
   const room = new GameRoom({
     log,
-    mongo: makeMongoApi()
+    mongo: {
+      upsertJugador: nickname => mongo.upsertJugador(nickname, log),
+      startMatch: () => mongo.startMatch(log),
+      registerPlayerInMatch: id => mongo.registerPlayerInMatch(id, log),
+      markPotionObtained: id => mongo.markPotionObtained(id, log),
+      finishMatch: () => mongo.finishMatch(log)
+    }
   });
 
   startWebSocketServer(room);
-  startHttpServer();
+  startHttpWebServer();
 }
 
 main().catch(err => {
-  log.error(`Error arrancando servidor: ${err.stack || err.message}`);
+  log.error(err.stack || err.message);
   process.exit(1);
 });
