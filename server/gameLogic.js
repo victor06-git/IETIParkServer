@@ -11,14 +11,8 @@ function isViewer(msg) {
   return msg.viewer === true || text.includes('viewer') || text.includes('flutter');
 }
 
-function num(v, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function round(v) {
-  return Math.round(num(v) * 100) / 100;
-}
+function round(v) { return Math.round(Number(v || 0) * 100) / 100; }
+function clampCat(v) { const n = Number(v || 0); return n >= 1 && n <= MAX_PLAYERS ? n : 1; }
 
 class GameRoom {
   constructor({ log, mongo }) {
@@ -29,7 +23,7 @@ class GameRoom {
     this.currentLevel = 0;
     this.levelChangeNonce = 0;
     this.lastLevelChangeAt = 0;
-    this.resetWorld();
+    this.resetWorldState();
   }
 
   isFull() { return this.players.size >= MAX_PLAYERS; }
@@ -50,36 +44,10 @@ class GameRoom {
     return 1;
   }
 
-  resetWorld() {
-    this.potionTaken = false;
-    this.potionConsumed = false;
-    this.potionCarrierId = '';
-    this.treeOpen = false;
-    this.treeOpenedAt = 0;
-    this.buttonActive = false;
-    this.platformActive = false;
-    this.goal = {
-      unlocked: false,
-      allPlayersPassed: false,
-      shouldChangeScreen: false,
-      nextLevelIndex: -1,
-      levelChangeNonce: this.levelChangeNonce,
-      crossedAt: 0,
-      changeReason: ''
-    };
-  }
-
-  resetPlayersAndWorld() {
-    this.players.clear();
-    this.currentLevel = 0;
-    this.levelChangeNonce = 0;
-    this.resetWorld();
-  }
-
   async addPlayer(msg, previousId = null) {
     const id = previousId || `p${this.nextId++}`;
-    const nickname = this.freeNick(msg.nickname);
     const cat = this.freeCat();
+    const nickname = this.freeNick(msg.nickname);
 
     if (this.players.size === 0 && this.mongo.startMatch) await this.mongo.startMatch();
     const jugadorDoc = this.mongo.upsertJugador ? await this.mongo.upsertJugador(nickname) : null;
@@ -97,7 +65,7 @@ class GameRoom {
       facingRight: true,
       grounded: true,
       standingOnPlayer: false,
-      hasPotion: false,
+      hasSentState: false,
       crossedDoor: false,
       crossedLevel2: false,
       mongoId: jugadorDoc ? jugadorDoc._id : null
@@ -115,80 +83,98 @@ class GameRoom {
     this.players.delete(id);
     if (this.potionCarrierId === id) {
       this.potionTaken = false;
-      this.potionConsumed = false;
       this.potionCarrierId = '';
-      for (const other of this.players.values()) other.hasPotion = false;
+      this.potionConsumed = false;
     }
     this.log.info(`${p.nickname} sale (${reason})`);
-    if (this.players.size === 0) {
-      this.currentLevel = 0;
-      this.levelChangeNonce = 0;
-      this.resetWorld();
-    }
+    if (this.players.size === 0) this.resetAll();
     return true;
   }
 
-  setInput() {
-    // El mapa y las físicas viven en el cliente. Se mantiene por compatibilidad.
+  resetAll() {
+    this.currentLevel = 0;
+    this.levelChangeNonce = 0;
+    this.lastLevelChangeAt = 0;
+    this.resetWorldState();
   }
 
-  setMoveInput() {
-    // Compatibilidad con clientes antiguos.
+  resetPlayersAndWorld() {
+    this.players.clear();
+    this.resetAll();
   }
 
-  updatePlayerState(playerId, msg) {
+  resetWorldState() {
+    this.potionTaken = false;
+    this.potionConsumed = false;
+    this.potionCarrierId = '';
+    this.doorOpen = false;
+    this.treeOpenedAt = 0;
+    this.levelUnlocked = false;
+    this.allPlayersPassed = false;
+    this.platformActive = false;
+    this.buttonVisible = this.currentLevel === 1;
+    this.buttonActive = false;
+    this.changeReason = '';
+    this.shouldChangeScreen = false;
+    this.nextLevelIndex = -1;
+    for (const p of this.players.values()) {
+      p.level = this.currentLevel;
+      p.crossedDoor = false;
+      p.crossedLevel2 = false;
+      p.hasSentState = false;
+      p.x = 0; p.y = 0; p.vx = 0; p.vy = 0; p.anim = 'idle';
+    }
+  }
+
+  setInput(playerId, msg) {
+    // Ya no se usa para mover. El cliente envía CLIENT_STATE.
+  }
+
+  setMoveInput(playerId, msg) {
+    // Compatibilidad antigua, no define posiciones de mapa.
+  }
+
+  setClientState(playerId, msg) {
     const p = this.players.get(playerId);
     if (!p) return;
-    p.level = Math.max(0, Math.floor(num(msg.level, this.currentLevel)));
+    p.level = Number.isFinite(Number(msg.level)) ? Number(msg.level) : this.currentLevel;
     p.x = round(msg.x);
     p.y = round(msg.y);
     p.vx = round(msg.vx);
     p.vy = round(msg.vy);
-    p.anim = String(msg.anim || p.anim || 'idle');
+    p.anim = String(msg.anim || 'idle');
     p.facingRight = msg.facingRight !== false;
     p.grounded = msg.grounded === true;
     p.standingOnPlayer = msg.standingOnPlayer === true;
+    p.hasSentState = true;
   }
 
   handleClientEvent(playerId, msg) {
     const p = this.players.get(playerId);
     if (!p) return;
     const event = String(msg.event || '').toUpperCase();
-    const level = Math.max(0, Math.floor(num(msg.level, this.currentLevel)));
-    if (level !== this.currentLevel) return;
-
-    p.x = round(msg.x != null ? msg.x : p.x);
-    p.y = round(msg.y != null ? msg.y : p.y);
-
-    if (event === 'FELL') {
-      p.vx = 0;
-      p.vy = 0;
-      p.anim = 'idle';
-      p.grounded = true;
-      this.log.info(`${p.nickname} cae y vuelve al inicio`);
-      return;
-    }
+    const level = Number.isFinite(Number(msg.level)) ? Number(msg.level) : this.currentLevel;
+    if (level !== this.currentLevel && event !== 'READY_LEVEL') return;
 
     if (event === 'TAKE_POTION') {
       if (!this.potionTaken && !this.potionConsumed) {
         this.potionTaken = true;
-        this.potionCarrierId = p.id;
-        p.hasPotion = true;
+        this.potionCarrierId = playerId;
         this.log.info(`${p.nickname} coge la pocion`);
       }
       return;
     }
 
     if (event === 'OPEN_TREE') {
-      if (!this.treeOpen && this.potionCarrierId === p.id) {
+      if (!this.doorOpen && this.potionCarrierId === playerId) {
         this.potionTaken = true;
         this.potionConsumed = true;
         this.potionCarrierId = '';
-        this.treeOpen = true;
+        this.doorOpen = true;
         this.treeOpenedAt = Date.now();
-        this.goal.unlocked = true;
+        this.levelUnlocked = true;
+        this.allPlayersPassed = false;
         for (const player of this.players.values()) {
-          player.hasPotion = false;
           player.crossedDoor = false;
           player.crossedLevel2 = false;
         }
@@ -200,6 +186,7 @@ class GameRoom {
 
     if (event === 'BUTTON_PRESSED') {
       if (this.currentLevel === 1 && !this.buttonActive) {
+        this.buttonVisible = true;
         this.buttonActive = true;
         this.platformActive = true;
         this.log.info(`${p.nickname} activa la plataforma movil`);
@@ -207,73 +194,69 @@ class GameRoom {
       return;
     }
 
+    if (event === 'FELL') {
+      this.log.info(`${p.nickname} cae al precipicio`);
+      return;
+    }
+
     if (event === 'CROSSED_DOOR') {
-      if (this.currentLevel === 0 && this.treeOpen && !p.crossedDoor) {
+      if (this.currentLevel === 0 && this.doorOpen && !p.crossedDoor) {
         p.crossedDoor = true;
         this.log.info(`${p.nickname} ha cruzado el arbol`);
-        this.checkLevel0Complete();
+        this.checkLevel0Finished();
       }
       return;
     }
 
     if (event === 'CROSSED_LEVEL') {
-      if (this.currentLevel === 1 && this.treeOpen && !p.crossedLevel2) {
+      if (this.currentLevel === 1 && !p.crossedLevel2) {
         p.crossedLevel2 = true;
         this.log.info(`${p.nickname} ha cruzado el segundo nivel`);
-        this.checkLevel1Complete();
+        this.checkLevel1Finished();
       }
     }
   }
 
-  checkLevel0Complete() {
-    const everyone = this.players.size > 0 && [...this.players.values()].every(p => p.crossedDoor === true);
-    if (!everyone || this.goal.allPlayersPassed) return;
-    this.goal.allPlayersPassed = true;
-    this.changeToLevel(1, 'ALL_PLAYERS_CROSSED_TREE');
-  }
-
-  checkLevel1Complete() {
-    const everyone = this.players.size > 0 && [...this.players.values()].every(p => p.crossedLevel2 === true);
-    if (!everyone || this.goal.allPlayersPassed) return;
-    this.goal.allPlayersPassed = true;
-    this.goal.shouldChangeScreen = true;
-    this.goal.nextLevelIndex = -1;
-    this.goal.changeReason = 'ALL_PLAYERS_CROSSED_LEVEL_2';
-    this.goal.crossedAt = Date.now();
-    this.lastLevelChangeAt = Date.now();
-    this.log.info('Todos los jugadores han cruzado el segundo nivel.');
-    if (this.mongo.finishMatch) this.mongo.finishMatch().catch(() => {});
-  }
-
-  changeToLevel(nextLevelIndex, reason) {
-    this.currentLevel = nextLevelIndex;
-    this.levelChangeNonce++;
-    this.lastLevelChangeAt = Date.now();
-    this.resetWorld();
-    this.goal.shouldChangeScreen = true;
-    this.goal.nextLevelIndex = nextLevelIndex;
-    this.goal.levelChangeNonce = this.levelChangeNonce;
-    this.goal.changeReason = reason;
-    for (const p of this.players.values()) {
-      p.level = nextLevelIndex;
-      p.crossedDoor = false;
-      p.crossedLevel2 = false;
-      p.hasPotion = false;
-      p.vx = 0;
-      p.vy = 0;
-      p.anim = 'idle';
-    }
-    this.log.info(`Todos los jugadores han cruzado el arbol. Cambiando al nivel ${nextLevelIndex}`);
-  }
-
   tick() {
-    if (this.goal.shouldChangeScreen && Date.now() - this.lastLevelChangeAt > 15000) {
-      this.goal.shouldChangeScreen = false;
-      this.goal.nextLevelIndex = -1;
+    // El servidor solo mantiene estado compartido; no simula mapa ni objetos.
+    if (this.shouldChangeScreen && Date.now() - this.lastLevelChangeAt > 15000) {
+      this.shouldChangeScreen = false;
+      this.nextLevelIndex = -1;
     }
   }
 
-  countPassed() {
+  checkLevel0Finished() {
+    const everyone = this.players.size > 0 && [...this.players.values()].every(p => p.crossedDoor);
+    if (everyone && !this.allPlayersPassed) this.changeToLevel(1, 'ALL_PLAYERS_CROSSED_TREE');
+  }
+
+  checkLevel1Finished() {
+    const everyone = this.players.size > 0 && [...this.players.values()].every(p => p.crossedLevel2);
+    if (everyone && !this.allPlayersPassed) {
+      this.allPlayersPassed = true;
+      this.shouldChangeScreen = true;
+      this.nextLevelIndex = -1;
+      this.changeReason = 'ALL_PLAYERS_CROSSED_LEVEL_2';
+      this.lastLevelChangeAt = Date.now();
+      this.log.info('Todos los jugadores han cruzado el segundo nivel.');
+      if (this.mongo.finishMatch) this.mongo.finishMatch().catch(() => {});
+    }
+  }
+
+  changeToLevel(nextLevel, reason) {
+    this.currentLevel = nextLevel;
+    this.levelChangeNonce++;
+    this.shouldChangeScreen = true;
+    this.nextLevelIndex = nextLevel;
+    this.lastLevelChangeAt = Date.now();
+    this.resetWorldState();
+    this.shouldChangeScreen = true;
+    this.nextLevelIndex = nextLevel;
+    this.changeReason = reason;
+    this.log.info(`Cambiando al nivel ${nextLevel}`);
+  }
+
+  countPlayersPastDoor() {
     let total = 0;
     for (const p of this.players.values()) if (p.crossedDoor || p.crossedLevel2) total++;
     return total;
@@ -283,16 +266,16 @@ class GameRoom {
     return [...this.players.values()].map(p => ({
       id: p.id,
       nickname: p.nickname,
-      cat: p.cat,
+      cat: clampCat(p.cat),
       level: p.level,
       x: round(p.x),
       y: round(p.y),
       vx: round(p.vx),
       vy: round(p.vy),
-      anim: p.anim,
-      facingRight: p.facingRight,
-      grounded: p.grounded,
-      standingOnPlayer: p.standingOnPlayer,
+      anim: p.anim || 'idle',
+      facingRight: p.facingRight !== false,
+      grounded: p.grounded === true,
+      standingOnPlayer: p.standingOnPlayer === true,
       hasPotion: this.potionCarrierId === p.id,
       crossedDoor: p.crossedDoor === true,
       crossedLevel2: p.crossedLevel2 === true,
@@ -304,41 +287,23 @@ class GameRoom {
     return {
       currentLevel: this.currentLevel,
       levelChangeNonce: this.levelChangeNonce,
-      shouldChangeScreen: this.goal.shouldChangeScreen,
-      nextLevelIndex: this.goal.nextLevelIndex,
-      changeReason: this.goal.changeReason,
-
-      potionTaken: this.potionTaken,
-      potionConsumed: this.potionConsumed,
+      shouldChangeScreen: this.shouldChangeScreen === true,
+      nextLevelIndex: this.nextLevelIndex == null ? -1 : this.nextLevelIndex,
+      changeReason: this.changeReason || '',
+      potionTaken: this.potionTaken === true,
+      potionConsumed: this.potionConsumed === true,
       potionCarrierId: this.potionCarrierId || '',
       potionKind: this.currentLevel === 1 ? 'green' : 'red',
-      potionX: 0,
-      potionY: 0,
-
-      doorOpen: this.treeOpen,
-      treeOpening: this.treeOpen && Date.now() - this.treeOpenedAt < 1400,
-      doorX: 0,
-      doorY: 0,
-      doorWidth: 0,
-      doorHeight: 0,
-
-      levelUnlocked: this.goal.unlocked,
-      allPlayersPassed: this.goal.allPlayersPassed,
+      doorOpen: this.doorOpen === true,
+      treeOpening: this.doorOpen && Date.now() - this.treeOpenedAt < 1600,
+      levelUnlocked: this.levelUnlocked === true,
+      allPlayersPassed: this.allPlayersPassed === true,
       totalPlayers: this.players.size,
-      passedPlayers: this.countPassed(),
+      passedPlayers: this.countPlayersPastDoor(),
       stackReady: [...this.players.values()].some(p => p.standingOnPlayer),
-
-      platformX: 0,
-      platformY: 0,
-      platformWidth: 0,
-      platformHeight: 0,
-      platformActive: this.platformActive,
-      buttonX: 0,
-      buttonY: 0,
-      buttonWidth: 0,
-      buttonHeight: 0,
+      platformActive: this.platformActive === true,
       buttonVisible: this.currentLevel === 1,
-      buttonActive: this.buttonActive
+      buttonActive: this.buttonActive === true
     };
   }
 }
