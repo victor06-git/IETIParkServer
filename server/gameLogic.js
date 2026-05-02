@@ -58,10 +58,13 @@ class GameRoom {
 
     this.potion = { ...potionStart, taken: false, carrierId: null, consumed: false };
     this.tree = { ...treeStart, open: false, openedAt: 0 };
+    this.levelChangeNonce = 0;
     this.goal = {
       unlocked: false,
       allPlayersPassed: false,
       shouldChangeScreen: false,
+      nextLevelIndex: -1,
+      levelChangeNonce: 0,
       crossedAt: 0,
       changeReason: ''
     };
@@ -166,6 +169,8 @@ class GameRoom {
     this.goal.unlocked = false;
     this.goal.allPlayersPassed = false;
     this.goal.shouldChangeScreen = false;
+    this.goal.nextLevelIndex = -1;
+    this.goal.levelChangeNonce = this.levelChangeNonce || 0;
     this.goal.crossedAt = 0;
     this.goal.changeReason = '';
 
@@ -195,30 +200,6 @@ class GameRoom {
     const dir = String(msg.dir || '').toUpperCase();
     player.input.moveX = dir === 'LEFT' ? -1 : (dir === 'RIGHT' ? 1 : 0);
     player.input.jumpPressed = dir === 'JUMP' || Boolean(msg.jumpPressed);
-  }
-
-  handleClientEvent(playerId, msg) {
-    const player = this.players.get(playerId);
-    if (!player) return;
-
-    const event = String(msg.event || '').toUpperCase();
-
-    // El cliente conoce la posición real del árbol por sus JSON/assets.
-    // Si el cliente que lleva la poción dice que ha tocado el árbol, el server
-    // solo valida que realmente sea el portador y abre el paso para todos.
-    if (event === 'OPEN_TREE') {
-      if (!this.tree.open && this.potion.carrierId === player.id) {
-        this.openTreeWithPotion(player);
-      }
-      return;
-    }
-
-    if (event === 'CROSSED_TREE') {
-      if (this.goal.unlocked && !player.crossedDoor) {
-        player.crossedDoor = true;
-        this.log.info(`${player.nickname} ha cruzado el arbol`);
-      }
-    }
   }
 
   tick() {
@@ -279,6 +260,7 @@ class GameRoom {
     this.goal.unlocked = true;
     this.goal.allPlayersPassed = false;
     this.goal.shouldChangeScreen = false;
+    this.goal.nextLevelIndex = -1;
     this.goal.changeReason = '';
 
     for (const p of this.players.values()) {
@@ -313,6 +295,9 @@ class GameRoom {
     if (everyonePassed && !this.goal.shouldChangeScreen) {
       this.goal.allPlayersPassed = true;
       this.goal.shouldChangeScreen = true;
+      this.goal.nextLevelIndex = 1;
+      this.levelChangeNonce = (this.levelChangeNonce || 0) + 1;
+      this.goal.levelChangeNonce = this.levelChangeNonce;
       this.goal.crossedAt = Date.now();
       this.goal.changeReason = 'ALL_PLAYERS_CROSSED_TREE';
       this.log.info('Todos los jugadores han cruzado el arbol. La app ya puede preparar el cambio de pantalla.');
@@ -325,8 +310,8 @@ class GameRoom {
 
     if (!everyonePassed) {
       this.goal.allPlayersPassed = false;
-      this.goal.shouldChangeScreen = false;
-      this.goal.changeReason = '';
+      // No borramos shouldChangeScreen aquí: Android necesita algunos frames para consumirlo.
+      if (!this.goal.shouldChangeScreen) this.goal.changeReason = '';
     }
   }
 
@@ -476,6 +461,9 @@ class GameRoom {
 
   worldForClient() {
     return {
+      currentLevel: 0,
+      nextLevelIndex: this.goal.nextLevelIndex || -1,
+      levelChangeNonce: this.goal.levelChangeNonce || 0,
       potionTaken: this.potion.taken,
       potionConsumed: this.potion.consumed,
       potionCarrierId: this.potion.carrierId || '',

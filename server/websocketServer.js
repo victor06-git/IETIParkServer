@@ -24,7 +24,7 @@ const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017';
 const SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
 const PING_EACH_MS = 30000;
 
-const clients = new Map();
+const clients = new Map(); // ws -> { id, viewer }
 
 function send(ws, msg) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -88,18 +88,31 @@ function handleMessage(ws, raw, room) {
     return;
   }
 
-  if (msg.type === 'INPUT') { if (client.id) room.setInput(client.id, msg); return; }
-  if (msg.type === 'MOVE') { if (client.id) room.setMoveInput(client.id, msg); return; }
-  if (msg.type === 'CLIENT_EVENT') {
-    if (client.id && room.handleClientEvent) {
-      room.handleClientEvent(client.id, msg);
-      sendState(room);
-    }
+  if (msg.type === 'INPUT') {
+    if (client.id) room.setInput(client.id, msg);
     return;
   }
-  if (msg.type === 'GET_PLAYERS') { send(ws, { type: 'PLAYER_LIST', players: room.playersForClient(), world: room.worldForClient() }); return; }
-  if (msg.type === 'LEAVE') { removeClient(ws, 'leave', room); return; }
-  if (msg.type === 'RESET_PLAYERS') { room.resetPlayersAndWorld(); sendPlayerList(room); return; }
+
+  if (msg.type === 'MOVE') {
+    if (client.id) room.setMoveInput(client.id, msg);
+    return;
+  }
+
+  if (msg.type === 'GET_PLAYERS') {
+    send(ws, { type: 'PLAYER_LIST', players: room.playersForClient(), world: room.worldForClient() });
+    return;
+  }
+
+  if (msg.type === 'LEAVE') {
+    removeClient(ws, 'leave', room);
+    return;
+  }
+
+  if (msg.type === 'RESET_PLAYERS') {
+    room.resetPlayersAndWorld();
+    sendPlayerList(room);
+    return;
+  }
 
   send(ws, { type: 'ERROR', msg: `Tipo desconocido: ${msg.type}` });
 }
@@ -111,7 +124,10 @@ function createWebApp() {
     const apkUrl = `https://${SERVER_HOST}/apk`;
     const indexPath = path.join(__dirname, '..', 'web', 'index.html');
     fs.readFile(indexPath, 'utf8', (err, data) => {
-      if (err) return res.status(500).send('Error al cargar la web');
+      if (err) {
+        log.error(`Error al leer index.html: ${err.message}`);
+        return res.status(500).send('Error al cargar la web');
+      }
       let html = data.replace(/text:\s*"[^"]*"/, `text: "${apkUrl}"`);
       html = html.replace(/apk\.pico2\.com/g, apkUrl);
       res.send(html);
@@ -120,10 +136,14 @@ function createWebApp() {
 
   app.get('/apk', (req, res) => {
     const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
-    if (!fs.existsSync(apkPath)) return res.status(404).send('APK no encontrada');
+    if (!fs.existsSync(apkPath)) {
+      log.error(`APK no encontrada en: ${apkPath}`);
+      return res.status(404).send('APK no encontrada');
+    }
     res.download(apkPath, 'drymophylakes.apk');
   });
 
+  app.get('/health', (req, res) => res.json({ ok: true }));
   app.use(express.static(path.join(__dirname, '..', 'web')));
   return app;
 }
@@ -152,11 +172,21 @@ function startServers(room) {
     });
   }, PING_EACH_MS);
 
-  server.listen(SERVER_PORT, () => log.info(`Servidor HTTP + WebSocket escuchando en ${SERVER_PORT}`));
-  server.on('error', err => { log.error(err.message); process.exit(1); });
+  server.listen(SERVER_PORT, () => {
+    log.info(`Servidor HTTP + WebSocket escuchando en puerto ${SERVER_PORT}`);
+    log.info(`Web: https://${SERVER_HOST}/web`);
+    log.info(`WebSocket: wss://${SERVER_HOST}`);
+  });
+
+  server.on('error', err => {
+    log.error(err.code === 'EADDRINUSE' ? `El puerto ${SERVER_PORT} ya está en uso.` : `Error servidor principal: ${err.message}`);
+    process.exit(1);
+  });
 
   if (HTTP_PORT && HTTP_PORT !== SERVER_PORT) {
-    createWebApp().listen(HTTP_PORT, () => log.info(`Servidor HTTP respaldo escuchando en ${HTTP_PORT}`));
+    const localApp = createWebApp();
+    const localServer = localApp.listen(HTTP_PORT, () => log.info(`HTTP local respaldo en puerto ${HTTP_PORT}`));
+    localServer.on('error', err => log.warn(`HTTP respaldo no iniciado: ${err.message}`));
   }
 }
 
