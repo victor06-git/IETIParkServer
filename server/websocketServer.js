@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const winston = require('winston');
 const express = require('express');
+const http = require('http');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
@@ -17,20 +18,32 @@ const log = winston.createLogger({
   transports: [new winston.transports.Console()]
 });
 
-const PORT = Number(process.env.SERVER_PORT || 3000);
+const SERVER_PORT = Number(process.env.SERVER_PORT || 3000);
+const HTTP_PORT = Number(process.env.HTTP_PORT || 3005);
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017';
 const SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
 const PING_EACH_MS = 30000;
 
-const clients = new Map(); // ws -> { id, viewer }
+const clients = new Map();
 
-function send(ws, msg) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
+function send(ws, msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
 function broadcast(msg) {
   const text = JSON.stringify(msg);
-  for (const ws of clients.keys()) if (ws.readyState === WebSocket.OPEN) ws.send(text);
+  for (const ws of clients.keys()) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(text);
+  }
 }
-function sendPlayerList(room) { broadcast({ type: 'PLAYER_LIST', players: room.playersForClient(), world: room.worldForClient() }); }
-function sendState(room) { broadcast({ type: 'STATE', players: room.playersForClient(), world: room.worldForClient() }); }
+
+function sendPlayerList(room) {
+  broadcast({ type: 'PLAYER_LIST', players: room.playersForClient(), world: room.worldForClient() });
+}
+
+function sendState(room) {
+  broadcast({ type: 'STATE', players: room.playersForClient(), world: room.worldForClient() });
+}
 
 function removeClient(ws, reason, room) {
   const client = clients.get(ws);
@@ -48,7 +61,12 @@ async function handleJoin(ws, msg, client, room) {
     send(ws, { type: 'PLAYER_LIST', players: room.playersForClient(), world: room.worldForClient() });
     return;
   }
-  if (room.isFull() && !client.id) { send(ws, { type: 'ERROR', msg: 'Sala llena' }); return; }
+
+  if (room.isFull() && !client.id) {
+    send(ws, { type: 'ERROR', msg: 'Sala llena' });
+    return;
+  }
+
   const player = await room.addPlayer(msg, client.id);
   clients.set(ws, { id: player.id, viewer: false });
   send(ws, { type: 'JOIN_OK', id: player.id, nickname: player.nickname, cat: player.cat, viewer: false });
@@ -69,56 +87,52 @@ function handleMessage(ws, raw, room) {
     });
     return;
   }
-  if (msg.type === 'CLIENT_STATE') { if (client.id) room.setClientState(client.id, msg); return; }
-  if (msg.type === 'CLIENT_EVENT') { if (client.id) { room.handleClientEvent(client.id, msg); sendState(room); } return; }
+
   if (msg.type === 'INPUT') { if (client.id) room.setInput(client.id, msg); return; }
   if (msg.type === 'MOVE') { if (client.id) room.setMoveInput(client.id, msg); return; }
+  if (msg.type === 'CLIENT_EVENT') {
+    if (client.id && room.handleClientEvent) {
+      room.handleClientEvent(client.id, msg);
+      sendState(room);
+    }
+    return;
+  }
   if (msg.type === 'GET_PLAYERS') { send(ws, { type: 'PLAYER_LIST', players: room.playersForClient(), world: room.worldForClient() }); return; }
   if (msg.type === 'LEAVE') { removeClient(ws, 'leave', room); return; }
   if (msg.type === 'RESET_PLAYERS') { room.resetPlayersAndWorld(); sendPlayerList(room); return; }
+
   send(ws, { type: 'ERROR', msg: `Tipo desconocido: ${msg.type}` });
 }
 
-function startHttpServer() {
+function createWebApp() {
   const app = express();
+
   app.get('/web', (req, res) => {
     const apkUrl = `https://${SERVER_HOST}/apk`;
     const indexPath = path.join(__dirname, '..', 'web', 'index.html');
     fs.readFile(indexPath, 'utf8', (err, data) => {
-      if (err) { log.error(`Error al leer index.html: ${err.message}`); return res.status(500).send('Error al cargar la web'); }
+      if (err) return res.status(500).send('Error al cargar la web');
       let html = data.replace(/text:\s*"[^"]*"/, `text: "${apkUrl}"`);
       html = html.replace(/apk\.pico2\.com/g, apkUrl);
       res.send(html);
     });
   });
+
   app.get('/apk', (req, res) => {
     const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
-    if (!fs.existsSync(apkPath)) { log.error(`APK no encontrada en: ${apkPath}`); return res.status(404).send('APK no encontrada'); }
+    if (!fs.existsSync(apkPath)) return res.status(404).send('APK no encontrada');
     res.download(apkPath, 'drymophylakes.apk');
   });
+
   app.use(express.static(path.join(__dirname, '..', 'web')));
-  const httpServer = app.listen(PORT, () => {
-    log.info(`Servidor HTTP + WebSocket escuchando en http://localhost:${PORT}`);
-    log.info(`Web con QR: http://localhost:${PORT}/web`);
-  });
-  httpServer.on('error', err => {
-    if (err.code === 'EADDRINUSE') log.error(`El puerto ${PORT} ya está en uso.`);
-    else log.error(`Error HTTP: ${err.message}`);
-    process.exit(1);
-  });
-  return httpServer;
+  return app;
 }
 
-function startWebSocketServer(httpServer, room) {
-  const wss = new WebSocket.Server({ server: httpServer });
-  log.info('Servidor WebSocket adjunto al servidor HTTP');
-  setInterval(() => { room.tick(); sendState(room); }, 1000 / FPS);
-  setInterval(() => {
-    wss.clients.forEach(ws => {
-      if (ws.isAlive === false) { removeClient(ws, 'timeout', room); ws.terminate(); return; }
-      ws.isAlive = false; ws.ping();
-    });
-  }, PING_EACH_MS);
+function startServers(room) {
+  const app = createWebApp();
+  const server = http.createServer(app);
+  const wss = new WebSocket.Server({ server });
+
   wss.on('connection', ws => {
     ws.isAlive = true;
     clients.set(ws, { id: null, viewer: true });
@@ -129,6 +143,21 @@ function startWebSocketServer(httpServer, room) {
     ws.on('close', () => removeClient(ws, 'close', room));
     ws.on('error', err => log.warn(err.message));
   });
+
+  setInterval(() => { room.tick(); sendState(room); }, 1000 / FPS);
+  setInterval(() => {
+    wss.clients.forEach(ws => {
+      if (ws.isAlive === false) { removeClient(ws, 'timeout', room); ws.terminate(); return; }
+      ws.isAlive = false; ws.ping();
+    });
+  }, PING_EACH_MS);
+
+  server.listen(SERVER_PORT, () => log.info(`Servidor HTTP + WebSocket escuchando en ${SERVER_PORT}`));
+  server.on('error', err => { log.error(err.message); process.exit(1); });
+
+  if (HTTP_PORT && HTTP_PORT !== SERVER_PORT) {
+    createWebApp().listen(HTTP_PORT, () => log.info(`Servidor HTTP respaldo escuchando en ${HTTP_PORT}`));
+  }
 }
 
 async function main() {
@@ -143,8 +172,7 @@ async function main() {
       finishMatch: () => mongo.finishMatch(log)
     }
   });
-  const httpServer = startHttpServer();
-  startWebSocketServer(httpServer, room);
+  startServers(room);
 }
 
 main().catch(err => { log.error(err.stack || err.message); process.exit(1); });
