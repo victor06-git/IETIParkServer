@@ -18,7 +18,7 @@ const log = winston.createLogger({
 });
 
 const WS_PORT = Number(process.env.SERVER_PORT || 3000);
-const HTTP_PORT = Number(process.env.HTTP_PORT || 3005);
+const HTTP_PORT = Number(process.env.HTTP_PORT || 3000);
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017';
 const SERVER_HOST = process.env.SERVER_HOST || 'pico2.ieti.site';
 const PING_EACH_MS = 30000;
