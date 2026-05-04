@@ -2,6 +2,9 @@ const MAX_PLAYERS = 8;
 const FPS = 30;
 const DT = 1 / FPS;
 const LEVEL0_ADVANCE_DELAY_MS = 2000;
+const RESPAWN_FIRST_DELAY_MS = 300;
+const RESPAWN_CHAIN_DELAY_MS = 650;
+const RESPAWN_DROP_HEIGHT = 86;
 
 // x/y del jugador representa el centro inferior del gato.
 const cat = { w: 26, h: 28, speed: 90, gravity: 900, jump: 310, maxFall: 520 };
@@ -71,6 +74,7 @@ class GameRoom {
     this.players = new Map();
     this.nextId = 1;
     this.levelIndex = 0;
+    this.nextRespawnAllowedAt = 0;
     this.resetWorld();
   }
 
@@ -106,7 +110,8 @@ class GameRoom {
       id, nickname, cat: catId, x: spawn.x, y: spawn.y, vx: 0, vy: 0,
       grounded: true, facingRight: true, anim: 'idle', crossedDoor: false,
       mongoId: jugadorDoc ? jugadorDoc._id : null,
-      input: { moveX: 0, jumpPressed: false, jumpHeld: false }
+      input: { moveX: 0, jumpPressed: false, jumpHeld: false },
+      respawnPendingUntil: 0
     };
     this.players.set(id, player);
     if (this.mongo.registerPlayerInMatch) await this.mongo.registerPlayerInMatch(player.mongoId);
@@ -146,7 +151,11 @@ class GameRoom {
       pathDir: 1
     };
     this.goal = { unlocked: false, allPlayersPassed: false, shouldChangeScreen: false, crossedAt: 0, changeReason: '', pendingAdvanceAt: 0 };
-    for (const p of this.players.values()) p.crossedDoor = false;
+    this.nextRespawnAllowedAt = 0;
+    for (const p of this.players.values()) {
+      p.crossedDoor = false;
+      p.respawnPendingUntil = 0;
+    }
   }
 
   resetPlayersAndWorld() {
@@ -227,6 +236,8 @@ class GameRoom {
   }
 
   updatePlayer(player) {
+    if (this.handlePendingRespawn(player)) return;
+
     const input = player.input || { moveX: 0, jumpPressed: false, jumpHeld: false };
     const move = clamp(Number(input.moveX || 0), -1, 1);
 
@@ -269,7 +280,7 @@ class GameRoom {
 
   handleLevel1Interactions(player, playerRect) {
     if (rectsTouch(playerRect, level1.deathZone) || player.y > map.height + 35) {
-      this.respawnPlayer(player);
+      this.scheduleRespawn(player);
       return;
     }
     if (!this.platform.active && rectsTouch(playerRect, this.buttonRect())) {
@@ -283,36 +294,64 @@ class GameRoom {
     if (!this.tree.open && this.potion.carrierId === player.id && rectsTouch(playerRect, this.treeRect())) this.openTreeWithPotion(player);
   }
 
-  respawnPlayer(player) {
+  scheduleRespawn(player) {
+    if (player.respawnPendingUntil && player.respawnPendingUntil > 0) return;
+
+    const now = Date.now();
+    const baseTime = Math.max(now + RESPAWN_FIRST_DELAY_MS, this.nextRespawnAllowedAt || 0);
+    player.respawnPendingUntil = baseTime;
+    this.nextRespawnAllowedAt = baseTime + RESPAWN_CHAIN_DELAY_MS;
+
+    // Mientras espera su turno no participa en colisiones ni se queda pegado a la death zone.
+    player.x = clamp(player.x, cat.w * 0.5, map.width - cat.w * 0.5);
+    player.y = map.height + 45;
+    player.vx = 0;
+    player.vy = 0;
+    player.grounded = false;
+    player.anim = 'jump';
+    player.input.jumpPressed = false;
+    player.input.jumpHeld = false;
+    this.log.info(`${player.nickname} ha caido. Respawn programado.`);
+  }
+
+  handlePendingRespawn(player) {
+    if (!player.respawnPendingUntil || player.respawnPendingUntil <= 0) return false;
+
+    const now = Date.now();
+    if (now < player.respawnPendingUntil) {
+      player.vx = 0;
+      player.vy = 0;
+      player.grounded = false;
+      player.anim = 'jump';
+      return true;
+    }
+
+    this.respawnPlayerFromAbove(player);
+    return false;
+  }
+
+  respawnPlayerFromAbove(player) {
     const base = this.spawnForCat(player.cat);
-    const candidates = [];
-    for (let row = 0; row < 4; row++) {
-      for (let col = 0; col < 5; col++) {
-        candidates.push({ x: base.x + col * (cat.w + 2), y: base.y - row * (cat.h + 2) });
-        candidates.push({ x: base.x - col * (cat.w + 2), y: base.y - row * (cat.h + 2) });
-      }
-    }
-    for (const pos of candidates) {
-      const rect = this.catRect({ x: pos.x, y: pos.y });
-      let overlaps = false;
-      for (const other of this.players.values()) {
-        if (other.id !== player.id && rectsTouch(rect, this.catRect(other))) { overlaps = true; break; }
-      }
-      if (!overlaps) {
-        player.x = clamp(pos.x, cat.w * 0.5, map.width - cat.w * 0.5);
-        player.y = clamp(pos.y, 0, map.height);
-        player.vx = 0; player.vy = 0; player.grounded = true;
-        return;
-      }
-    }
-    player.x = base.x; player.y = base.y; player.vx = 0; player.vy = 0; player.grounded = true;
+    player.x = clamp(base.x, cat.w * 0.5, map.width - cat.w * 0.5);
+    player.y = clamp(base.y - RESPAWN_DROP_HEIGHT, 0, map.height + 60);
+    player.vx = 0;
+    player.vy = 0;
+    player.grounded = false;
+    player.anim = 'jump';
+    player.crossedDoor = false;
+    player.respawnPendingUntil = 0;
+    this.log.info(`${player.nickname} reaparece cayendo desde arriba.`);
   }
 
   openTreeWithPotion(player) {
     this.potion.taken = true; this.potion.consumed = true; this.potion.carrierId = null;
     this.tree.open = true; this.tree.openedAt = Date.now();
     this.goal.unlocked = true; this.goal.allPlayersPassed = false; this.goal.shouldChangeScreen = false; this.goal.changeReason = '';
-    for (const p of this.players.values()) p.crossedDoor = false;
+    this.nextRespawnAllowedAt = 0;
+    for (const p of this.players.values()) {
+      p.crossedDoor = false;
+      p.respawnPendingUntil = 0;
+    }
     this.log.info(`${player.nickname} cura el arbol con la pocion`);
     if (player.mongoId && this.mongo.markPotionObtained) this.mongo.markPotionObtained(player.mongoId).catch(() => {});
   }
@@ -444,7 +483,11 @@ class GameRoom {
 
   playerBoxes(player) {
     const boxes = [];
-    for (const other of this.players.values()) if (other.id !== player.id) boxes.push({ name: 'player', ...this.catRect(other) });
+    for (const other of this.players.values()) {
+      if (other.id === player.id) continue;
+      if (other.respawnPendingUntil && other.respawnPendingUntil > 0) continue;
+      boxes.push({ name: 'player', ...this.catRect(other) });
+    }
     return boxes;
   }
 
