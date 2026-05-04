@@ -1,6 +1,7 @@
 const MAX_PLAYERS = 8;
 const FPS = 30;
 const DT = 1 / FPS;
+const LEVEL0_ADVANCE_DELAY_MS = 2000;
 
 // x/y del jugador representa el centro inferior del gato.
 const cat = { w: 26, h: 28, speed: 90, gravity: 900, jump: 310, maxFall: 520 };
@@ -19,7 +20,7 @@ const level0 = {
   ]
 };
 
-// Coordenadas extraídas de los nuevos assets, sin modificar ningún JSON/asset.
+// Siguiente nivel
 const level1 = {
   index: 1,
   floorY: 143,
@@ -30,8 +31,13 @@ const level1 = {
   rightFloor: { name: 'floor_right', x: 255, y: 142, w: 77, h: 35 },
   deathZone: { name: 'dead_zone', x: 75, y: 164, w: 182, h: 16 },
   platformStart: { x: 144, y: 80, w: 78, h: 11 },
-  platformMinX: 138,
-  platformMaxX: 184,
+  // Path definido en assets/levels/paths/level_001_paths.json.
+  // Los puntos representan el centro de la plataforma, no su esquina superior izquierda.
+  platformPath: [
+    { x: 182, y: 85 },
+    { x: 184, y: 143 },
+    { x: 138, y: 143 }
+  ],
   platformSpeed: 32,
   buttonOffsetX: 210 - 144,
   buttonOffsetY: 78 - 80,
@@ -133,9 +139,13 @@ class GameRoom {
       active: false,
       dir: 1,
       previousX: level1.platformStart.x,
-      dx: 0
+      previousY: level1.platformStart.y,
+      dx: 0,
+      dy: 0,
+      pathIndex: 0,
+      pathDir: 1
     };
-    this.goal = { unlocked: false, allPlayersPassed: false, shouldChangeScreen: false, crossedAt: 0, changeReason: '' };
+    this.goal = { unlocked: false, allPlayersPassed: false, shouldChangeScreen: false, crossedAt: 0, changeReason: '', pendingAdvanceAt: 0 };
     for (const p of this.players.values()) p.crossedDoor = false;
   }
 
@@ -168,20 +178,62 @@ class GameRoom {
 
   updatePlatform() {
     this.platform.previousX = this.platform.x;
+    this.platform.previousY = this.platform.y;
     this.platform.dx = 0;
+    this.platform.dy = 0;
     if (this.levelIndex !== 1 || !this.platform.active) return;
-    let nextX = this.platform.x + this.platform.dir * level1.platformSpeed * DT;
-    if (nextX >= level1.platformMaxX) { nextX = level1.platformMaxX; this.platform.dir = -1; }
-    if (nextX <= level1.platformMinX) { nextX = level1.platformMinX; this.platform.dir = 1; }
-    this.platform.dx = nextX - this.platform.x;
-    this.platform.x = nextX;
+
+    const path = level1.platformPath;
+    if (!path || path.length < 2) return;
+
+    let remaining = level1.platformSpeed * DT;
+    while (remaining > 0.0001) {
+      const currentCenter = this.platformCenter();
+      let nextIndex = this.platform.pathIndex + this.platform.pathDir;
+      if (nextIndex >= path.length) { this.platform.pathDir = -1; nextIndex = path.length - 2; }
+      if (nextIndex < 0) { this.platform.pathDir = 1; nextIndex = 1; }
+
+      const target = path[nextIndex];
+      const vx = target.x - currentCenter.x;
+      const vy = target.y - currentCenter.y;
+      const distance = Math.sqrt(vx * vx + vy * vy);
+
+      if (distance <= 0.0001) {
+        this.platform.pathIndex = nextIndex;
+        continue;
+      }
+
+      const step = Math.min(remaining, distance);
+      const ratio = step / distance;
+      const nextCenterX = currentCenter.x + vx * ratio;
+      const nextCenterY = currentCenter.y + vy * ratio;
+      this.setPlatformCenter(nextCenterX, nextCenterY);
+      remaining -= step;
+
+      if (step >= distance - 0.0001) this.platform.pathIndex = nextIndex;
+    }
+
+    this.platform.dx = this.platform.x - this.platform.previousX;
+    this.platform.dy = this.platform.y - this.platform.previousY;
+  }
+
+  platformCenter() {
+    return { x: this.platform.x + this.platform.w * 0.5, y: this.platform.y + this.platform.h * 0.5 };
+  }
+
+  setPlatformCenter(x, y) {
+    this.platform.x = x - this.platform.w * 0.5;
+    this.platform.y = y - this.platform.h * 0.5;
   }
 
   updatePlayer(player) {
     const input = player.input || { moveX: 0, jumpPressed: false, jumpHeld: false };
     const move = clamp(Number(input.moveX || 0), -1, 1);
 
-    if (this.isOnMovingPlatform(player) && this.platform.dx !== 0) player.x += this.platform.dx;
+    if (this.isOnMovingPlatform(player) && (this.platform.dx !== 0 || this.platform.dy !== 0)) {
+      player.x += this.platform.dx;
+      player.y += this.platform.dy;
+    }
 
     player.vx = move * cat.speed;
     if (move < 0) player.facingRight = false;
@@ -280,7 +332,12 @@ class GameRoom {
     if (everyonePassed && !this.goal.shouldChangeScreen) {
       this.goal.allPlayersPassed = true;
       if (this.levelIndex === 0) {
-        this.advanceToLevel1();
+        const now = Date.now();
+        if (!this.goal.pendingAdvanceAt) {
+          this.goal.pendingAdvanceAt = now + LEVEL0_ADVANCE_DELAY_MS;
+          this.goal.changeReason = 'LEVEL_0_COMPLETE_WAITING_TREE_ANIMATION';
+        }
+        if (now >= this.goal.pendingAdvanceAt) this.advanceToLevel1();
       } else {
         this.goal.shouldChangeScreen = true;
         this.goal.crossedAt = Date.now();
@@ -289,7 +346,12 @@ class GameRoom {
       }
       return;
     }
-    if (!everyonePassed) { this.goal.allPlayersPassed = false; this.goal.shouldChangeScreen = false; this.goal.changeReason = ''; }
+    if (!everyonePassed) {
+      this.goal.allPlayersPassed = false;
+      this.goal.shouldChangeScreen = false;
+      this.goal.changeReason = '';
+      this.goal.pendingAdvanceAt = 0;
+    }
   }
 
   advanceToLevel1() {
@@ -347,9 +409,10 @@ class GameRoom {
 
   isOnMovingPlatform(player) {
     if (this.levelIndex !== 1) return false;
-    const foot = { x: player.x - cat.w * 0.5 + 1, y: player.y, w: cat.w - 2, h: 1.5 };
-    const top = { x: this.platform.x, y: this.platform.y - 0.5, w: this.platform.w, h: 1.5 };
-    return rectsTouch(foot, top);
+    const foot = { x: player.x - cat.w * 0.5 + 1, y: player.y, w: cat.w - 2, h: 2.5 };
+    const currentTop = { x: this.platform.x, y: this.platform.y - 1.0, w: this.platform.w, h: 3.0 };
+    const previousTop = { x: this.platform.previousX, y: this.platform.previousY - 1.0, w: this.platform.w, h: 3.0 };
+    return rectsTouch(foot, currentTop) || rectsTouch(foot, previousTop);
   }
 
   touchesClosedTreeWithPotion(player, rect) {
