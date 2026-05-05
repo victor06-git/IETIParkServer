@@ -137,8 +137,13 @@ async function finishMatch(log) {
   }
 }
 
+function getDb() {
+  return db;
+}
+
 module.exports = {
   connectMongo,
+  getDb,
   upsertJugador,
   startMatch,
   registerPlayerInMatch,

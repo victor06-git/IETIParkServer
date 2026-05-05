@@ -6,6 +6,7 @@ const fs = require('fs');
 require('dotenv').config();
 
 const mongo = require('./mongo');
+const { getSchema } = require('./nav-sync');
 const { GameRoom, MAX_PLAYERS, FPS, isViewer } = require('./gameLogic');
 
 const log = winston.createLogger({
@@ -174,6 +175,12 @@ function startWebSocketServer(httpServer, room) {
 
 function startHttpServer() {
   const app = express();
+
+  app.get('/schema', async (req, res) => {
+    const schema = await getSchema(mongo.getDb());
+    if (!schema) return res.status(503).json({ success: false, message: 'MongoDB no disponible' });
+    res.json({ success: true, data: schema });
+  });
 
   app.get('/web', (req, res) => {
     const apkUrl = `https://${SERVER_HOST}/apk`;
