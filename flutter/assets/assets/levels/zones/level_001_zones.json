@@ -1,0 +1,88 @@
+{
+  "zoneGroups": [
+    {
+      "id": "__main__",
+      "name": "Main",
+      "collapsed": false
+    }
+  ],
+  "zones": [
+    {
+      "name": "Zone 1",
+      "type": "arbre",
+      "gameplayData": "",
+      "x": 251,
+      "y": 47,
+      "width": 72,
+      "height": 95,
+      "color": "purple",
+      "groupId": "__main__"
+    },
+    {
+      "name": "limit",
+      "type": "mur",
+      "gameplayData": "",
+      "x": -44,
+      "y": -3,
+      "width": 47,
+      "height": 151,
+      "color": "red",
+      "groupId": "__main__"
+    },
+    {
+      "name": "limit",
+      "type": "mur",
+      "gameplayData": "",
+      "x": 318,
+      "y": -8,
+      "width": 47,
+      "height": 151,
+      "color": "red",
+      "groupId": "__main__"
+    },
+    {
+      "name": "dead_zone",
+      "type": "death",
+      "gameplayData": "",
+      "x": 75,
+      "y": 164,
+      "width": 182,
+      "height": 16,
+      "color": "lightGreen",
+      "groupId": "__main__"
+    },
+    {
+      "name": "floor",
+      "type": "floor",
+      "gameplayData": "",
+      "x": 2,
+      "y": 143,
+      "width": 77,
+      "height": 35,
+      "color": "blue",
+      "groupId": "__main__"
+    },
+    {
+      "name": "floor",
+      "type": "floor",
+      "gameplayData": "",
+      "x": 255,
+      "y": 142,
+      "width": 77,
+      "height": 35,
+      "color": "blue",
+      "groupId": "__main__"
+    },
+    {
+      "name": "platform",
+      "type": "Category 3",
+      "gameplayData": "",
+      "x": 144,
+      "y": 80,
+      "width": 78,
+      "height": 11,
+      "color": "yellow",
+      "groupId": "__main__"
+    }
+  ]
+}

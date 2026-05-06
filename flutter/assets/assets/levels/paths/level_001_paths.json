@@ -1,0 +1,32 @@
+{
+  "pathGroups": [
+    {
+      "id": "__main__",
+      "name": "Main",
+      "collapsed": false
+    }
+  ],
+  "paths": [
+    {
+      "id": "path_1",
+      "name": "platform",
+      "points": [
+        {
+          "x": 182,
+          "y": 85
+        },
+        {
+          "x": 184,
+          "y": 143
+        },
+        {
+          "x": 138,
+          "y": 143
+        }
+      ],
+      "color": "purple",
+      "groupId": "__main__"
+    }
+  ],
+  "pathBindings": []
+}

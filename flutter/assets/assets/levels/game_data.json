@@ -1,0 +1,774 @@
+{
+  "name": "IETIPark2",
+  "description": "",
+  "levels": [
+    {
+      "name": "Tutorial level",
+      "description": "",
+      "gameplayData": "",
+      "layers": [
+        {
+          "name": "level",
+          "gameplayData": "",
+          "x": -2,
+          "y": 4,
+          "depth": 0.0,
+          "tilesSheetFile": "media/Terrain_and_Props.png",
+          "tilesWidth": 16,
+          "tilesHeight": 16,
+          "visible": true,
+          "groupId": "__main__",
+          "tileMapFile": "tilemaps/level_000_layer_000.json"
+        },
+        {
+          "name": "bg",
+          "gameplayData": "",
+          "x": 0,
+          "y": 0,
+          "depth": 0.0,
+          "tilesSheetFile": "media/BG_1_1.png",
+          "tilesWidth": 320,
+          "tilesHeight": 180,
+          "visible": true,
+          "groupId": "__main__",
+          "tileMapFile": "tilemaps/level_000_layer_001.json"
+        },
+        {
+          "name": "bg2",
+          "gameplayData": "",
+          "x": 0,
+          "y": 0,
+          "depth": 0.0,
+          "tilesSheetFile": "media/BG_2_1.png",
+          "tilesWidth": 320,
+          "tilesHeight": 180,
+          "visible": true,
+          "groupId": "__main__",
+          "tileMapFile": "tilemaps/level_000_layer_002.json"
+        },
+        {
+          "name": "bg3",
+          "gameplayData": "",
+          "x": 0,
+          "y": 0,
+          "depth": 0.0,
+          "tilesSheetFile": "media/BG_3_1.png",
+          "tilesWidth": 320,
+          "tilesHeight": 180,
+          "visible": true,
+          "groupId": "__main__",
+          "tileMapFile": "tilemaps/level_000_layer_003.json"
+        }
+      ],
+      "layerGroups": [
+        {
+          "id": "__main__",
+          "name": "Main",
+          "collapsed": false
+        }
+      ],
+      "sprites": [
+        {
+          "name": "cat1",
+          "gameplayData": "",
+          "type": "cat1",
+          "animationId": "anim_1776548802946154",
+          "x": 47,
+          "y": 175,
+          "width": 16,
+          "height": 16,
+          "imageFile": "media/idle_cat1.png",
+          "flipX": false,
+          "flipY": false,
+          "depth": 0.0,
+          "groupId": "__main__"
+        },
+        {
+          "name": "cat2",
+          "gameplayData": "",
+          "type": "cat2",
+          "animationId": "anim_1776698066982895",
+          "x": 29,
+          "y": 175,
+          "width": 16,
+          "height": 16,
+          "imageFile": "media/idle_cat2.png",
+          "flipX": false,
+          "flipY": false,
+          "depth": 0.0,
+          "groupId": "__main__"
+        },
+        {
+          "name": "cat4",
+          "gameplayData": "",
+          "type": "cat4",
+          "animationId": "anim_1776699801506388",
+          "x": 12,
+          "y": 175,
+          "width": 16,
+          "height": 16,
+          "imageFile": "media/idle_cat4.png",
+          "flipX": false,
+          "flipY": false,
+          "depth": 0.0,
+          "groupId": "__main__"
+        },
+        {
+          "name": "potion",
+          "gameplayData": "",
+          "type": "potion",
+          "animationId": "anim_1777384492009725",
+          "x": 181,
+          "y": 118,
+          "width": 45,
+          "height": 45,
+          "imageFile": "media/Icon1(2)(2).png",
+          "flipX": false,
+          "flipY": false,
+          "depth": 0.0,
+          "groupId": "__main__"
+        },
+        {
+          "name": "dead_tree",
+          "gameplayData": "",
+          "type": "dead_tree",
+          "animationId": "anim_1777384693370852",
+          "x": 285,
+          "y": 148,
+          "width": 100,
+          "height": 100,
+          "imageFile": "media/tree_die1.png",
+          "flipX": false,
+          "flipY": false,
+          "depth": 0.0,
+          "groupId": "__main__"
+        }
+      ],
+      "spriteGroups": [
+        {
+          "id": "__main__",
+          "name": "Main",
+          "collapsed": false
+        }
+      ],
+      "groupId": "__main__",
+      "viewportWidth": 320,
+      "viewportHeight": 180,
+      "viewportX": 0,
+      "viewportY": 0,
+      "viewportAdaptation": "letterbox",
+      "viewportInitialColor": "green",
+      "viewportPreviewColor": "blue",
+      "backgroundColorHex": "#DCDCE1",
+      "depthSensitivity": 0.08,
+      "zonesFile": "zones/level_000_zones.json",
+      "pathsFile": "paths/level_000_paths.json"
+    },
+    {
+      "name": "Level2",
+      "description": "",
+      "gameplayData": "",
+      "layers": [
+        {
+          "name": "level",
+          "gameplayData": "",
+          "x": 0,
+          "y": 0,
+          "depth": 0.0,
+          "tilesSheetFile": "media/Terrain_and_Props.png",
+          "tilesWidth": 16,
+          "tilesHeight": 16,
+          "visible": true,
+          "groupId": "__main__",
+          "tileMapFile": "tilemaps/level_001_layer_000.json"
+        },
+        {
+          "name": "bg",
+          "gameplayData": "",
+          "x": 0,
+          "y": 0,
+          "depth": 0.0,
+          "tilesSheetFile": "media/BG_1_1.png",
+          "tilesWidth": 320,
+          "tilesHeight": 180,
+          "visible": true,
+          "groupId": "__main__",
+          "tileMapFile": "tilemaps/level_001_layer_001.json"
+        },
+        {
+          "name": "bg2",
+          "gameplayData": "",
+          "x": 0,
+          "y": 0,
+          "depth": 0.0,
+          "tilesSheetFile": "media/BG_2_1.png",
+          "tilesWidth": 320,
+          "tilesHeight": 180,
+          "visible": true,
+          "groupId": "__main__",
+          "tileMapFile": "tilemaps/level_001_layer_002.json"
+        },
+        {
+          "name": "bg3",
+          "gameplayData": "",
+          "x": 0,
+          "y": 0,
+          "depth": 0.0,
+          "tilesSheetFile": "media/BG_3_1.png",
+          "tilesWidth": 320,
+          "tilesHeight": 180,
+          "visible": true,
+          "groupId": "__main__",
+          "tileMapFile": "tilemaps/level_001_layer_003.json"
+        }
+      ],
+      "layerGroups": [
+        {
+          "id": "__main__",
+          "name": "Main",
+          "collapsed": false
+        }
+      ],
+      "sprites": [
+        {
+          "name": "cat3",
+          "gameplayData": "",
+          "type": "cat3",
+          "animationId": "anim_1776698286238299",
+          "x": 19,
+          "y": 136,
+          "width": 16,
+          "height": 16,
+          "imageFile": "media/idle_cat3.png",
+          "flipX": false,
+          "flipY": false,
+          "depth": 0.0,
+          "groupId": "__main__"
+        },
+        {
+          "name": "dead_tree",
+          "gameplayData": "",
+          "type": "dead_tree",
+          "animationId": "anim_1777384693370852",
+          "x": 293,
+          "y": 111,
+          "width": 100,
+          "height": 100,
+          "imageFile": "media/tree_die1.png",
+          "flipX": false,
+          "flipY": false,
+          "depth": 0.0,
+          "groupId": "__main__"
+        },
+        {
+          "name": "green_potion",
+          "gameplayData": "",
+          "type": "green_potion",
+          "animationId": "anim_1777577672442746",
+          "x": 181,
+          "y": 66,
+          "width": 32,
+          "height": 32,
+          "imageFile": "media/Icon7(2).png",
+          "flipX": false,
+          "flipY": false,
+          "depth": 0.0,
+          "groupId": "__main__"
+        },
+        {
+          "name": "button",
+          "gameplayData": "",
+          "type": "button",
+          "animationId": "anim_1777578845429821",
+          "x": 210,
+          "y": 78,
+          "width": 32,
+          "height": 32,
+          "imageFile": "media/Icon7(6).png",
+          "flipX": false,
+          "flipY": false,
+          "depth": 0.0,
+          "groupId": "__main__"
+        }
+      ],
+      "spriteGroups": [
+        {
+          "id": "__main__",
+          "name": "Main",
+          "collapsed": false
+        }
+      ],
+      "groupId": "__main__",
+      "viewportWidth": 320,
+      "viewportHeight": 180,
+      "viewportX": 0,
+      "viewportY": 0,
+      "viewportAdaptation": "letterbox",
+      "viewportInitialColor": "green",
+      "viewportPreviewColor": "blue",
+      "backgroundColorHex": "#DCDCE1",
+      "depthSensitivity": 0.08,
+      "zonesFile": "zones/level_001_zones.json",
+      "pathsFile": "paths/level_001_paths.json"
+    }
+  ],
+  "levelGroups": [
+    {
+      "id": "__main__",
+      "name": "Main",
+      "collapsed": false
+    }
+  ],
+  "mediaAssets": [
+    {
+      "name": "idle_cat1",
+      "fileName": "media/idle_cat1.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "run_cat1",
+      "fileName": "media/run_cat1.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 20,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "jump_cat1",
+      "fileName": "media/jump_cat1.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 24,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "idle_cat2",
+      "fileName": "media/idle_cat2.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "run_cat2",
+      "fileName": "media/run_cat2.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 20,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "jump_cat2",
+      "fileName": "media/jump_cat2.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 24,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "idle_cat3",
+      "fileName": "media/idle_cat3.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "run_cat3",
+      "fileName": "media/run_cat3.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 20,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "jump_cat3",
+      "fileName": "media/jump_cat3.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 24,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "idle_cat4",
+      "fileName": "media/idle_cat4.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "run_cat4",
+      "fileName": "media/run_cat4.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 20,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "jump_cat4",
+      "fileName": "media/jump_cat4.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 24,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "Terrain_and_Props",
+      "fileName": "media/Terrain_and_Props.png",
+      "mediaType": "tileset",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776700017245398_0"
+    },
+    {
+      "name": "Mockup",
+      "fileName": "media/Mockup.png",
+      "mediaType": "tileset",
+      "tileWidth": 1600,
+      "tileHeight": 400,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776700017245398_0"
+    },
+    {
+      "name": "idle_cat5",
+      "fileName": "media/idle_cat5.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "idle_cat6",
+      "fileName": "media/idle_cat6.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "idle_cat7",
+      "fileName": "media/idle_cat7.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "idle_cat8",
+      "fileName": "media/idle_cat8.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "run_cat5",
+      "fileName": "media/run_cat5.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 20,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "jump_cat5",
+      "fileName": "media/jump_cat5.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 24,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "run_cat6",
+      "fileName": "media/run_cat6.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 20,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "jump_cat6",
+      "fileName": "media/jump_cat6.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 24,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "run_cat7",
+      "fileName": "media/run_cat7.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 20,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "jump_cat7",
+      "fileName": "media/jump_cat7.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 24,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "run_cat8",
+      "fileName": "media/run_cat8.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 20,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "jump_cat8",
+      "fileName": "media/jump_cat8.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 20,
+      "tileHeight": 24,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776697689770522_0"
+    },
+    {
+      "name": "Green",
+      "fileName": "media/Icon7.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 32,
+      "tileHeight": 32,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776782473910706_0"
+    },
+    {
+      "name": "Orange",
+      "fileName": "media/Icon17.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 32,
+      "tileHeight": 32,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776782473910706_0"
+    },
+    {
+      "name": "Blue",
+      "fileName": "media/Icon5.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 32,
+      "tileHeight": 32,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776782473910706_0"
+    },
+    {
+      "name": "Black",
+      "fileName": "media/Icon6.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 32,
+      "tileHeight": 32,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776782473910706_0"
+    },
+    {
+      "name": "tree",
+      "fileName": "media/48x48 trees.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 48,
+      "tileHeight": 48,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776700017245398_0"
+    },
+    {
+      "name": "shop",
+      "fileName": "media/shop.png",
+      "mediaType": "tileset",
+      "tileWidth": 118,
+      "tileHeight": 98,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776700017245398_0"
+    },
+    {
+      "name": "lamp",
+      "fileName": "media/lamp.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 23,
+      "tileHeight": 57,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776700017245398_0"
+    },
+    {
+      "name": "shop_anim",
+      "fileName": "media/shop_anim.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 118,
+      "tileHeight": 126,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776700017245398_0"
+    },
+    {
+      "name": "tree1",
+      "fileName": "media/tree1.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 128,
+      "tileHeight": 128,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776700017245398_0"
+    },
+    {
+      "name": "piclumen-1746974690027",
+      "fileName": "media/piclumen-1746974690027.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 1344,
+      "tileHeight": 768,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__main__"
+    },
+    {
+      "name": "BG_1_1",
+      "fileName": "media/BG_1_1.png",
+      "mediaType": "tileset",
+      "tileWidth": 320,
+      "tileHeight": 180,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__main__"
+    },
+    {
+      "name": "BG_2_1",
+      "fileName": "media/BG_2_1.png",
+      "mediaType": "tileset",
+      "tileWidth": 320,
+      "tileHeight": 180,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__main__"
+    },
+    {
+      "name": "BG_3_1",
+      "fileName": "media/BG_3_1.png",
+      "mediaType": "tileset",
+      "tileWidth": 320,
+      "tileHeight": 180,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__main__"
+    },
+    {
+      "name": "potion",
+      "fileName": "media/Icon1(2)(2).png",
+      "mediaType": "spritesheet",
+      "tileWidth": 45,
+      "tileHeight": 45,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776782473910706_0"
+    },
+    {
+      "name": "tree_die1",
+      "fileName": "media/tree_die1.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 100,
+      "tileHeight": 100,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776700017245398_0"
+    },
+    {
+      "name": "tree_alive1",
+      "fileName": "media/tree_alive1.png",
+      "mediaType": "spritesheet",
+      "tileWidth": 100,
+      "tileHeight": 100,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776700017245398_0"
+    },
+    {
+      "name": "potion_green",
+      "fileName": "media/Icon7(2).png",
+      "mediaType": "spritesheet",
+      "tileWidth": 32,
+      "tileHeight": 32,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__group_1776782473910706_0"
+    },
+    {
+      "name": "button",
+      "fileName": "media/Icon7(5).png",
+      "mediaType": "spritesheet",
+      "tileWidth": 32,
+      "tileHeight": 32,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__main__"
+    },
+    {
+      "name": "static_button",
+      "fileName": "media/Icon7(6).png",
+      "mediaType": "spritesheet",
+      "tileWidth": 32,
+      "tileHeight": 32,
+      "selectionColorHex": "#FFCC00",
+      "groupId": "__main__"
+    }
+  ],
+  "mediaGroups": [
+    {
+      "id": "__main__",
+      "name": "Main",
+      "collapsed": false
+    },
+    {
+      "id": "__group_1776697689770522_0",
+      "name": "cats",
+      "collapsed": true
+    },
+    {
+      "id": "__group_1776700017245398_0",
+      "name": "map",
+      "collapsed": true
+    },
+    {
+      "id": "__group_1776782473910706_0",
+      "name": "Potions",
+      "collapsed": false
+    }
+  ],
+  "zoneTypes": [
+    {
+      "name": "floor",
+      "color": "blue"
+    },
+    {
+      "name": "mur",
+      "color": "red"
+    },
+    {
+      "name": "Category 3",
+      "color": "yellow"
+    },
+    {
+      "name": "arbre",
+      "color": "purple"
+    },
+    {
+      "name": "death",
+      "color": "lightGreen"
+    }
+  ],
+  "animationsFile": "animations/animations.json"
+}

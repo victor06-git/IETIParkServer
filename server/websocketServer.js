@@ -198,6 +198,12 @@ function startHttpServer() {
     });
   });
 
+  app.get('/partida', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'flutter', 'index.html'));
+  });
+
+  app.use('/partida', express.static(path.join(__dirname, '..', 'flutter')));
+
   app.get('/apk', (req, res) => {
     const apkPath = path.join(__dirname, '..', 'apk', 'android-debug.apk');
 
